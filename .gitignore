@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime data (created by /start in user's working directory)
+inbox/
+todo/
+mails/
+to-clean-by-user/
+to-send/
+to-work/
+to-brief/
+docs/
+memory/
+consult.md
+CLAUDE.md

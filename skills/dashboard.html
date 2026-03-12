@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Todomail - Dashboard Cowork</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: { darkBg: '#0f172a', darkCard: '#1e293b', darkSidebar: '#162032' } } }
+        }
+    </script>
+    <style>
+        @keyframes slideUp { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-slide-up { animation: slideUp 0.3s ease-out forwards; }
+        .glass-nav { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(12px); border-bottom: 1px solid rgba(0,0,0,0.05); }
+        .dark .glass-nav { background: rgba(15, 23, 42, 0.8); border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        .card-expand { max-height: 0; overflow: hidden; transition: max-height 0.35s ease-out, opacity 0.25s ease-out; opacity: 0; }
+        .card-expand.open { max-height: 600px; opacity: 1; transition: max-height 0.45s ease-in, opacity 0.3s ease-in; }
+    </style>
+</head>
+<body class="bg-slate-50 dark:bg-darkBg text-slate-900 dark:text-slate-100 transition-colors duration-500 font-sans">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const SUBDIRS = [
+            { key: "trash", label: "Corbeille", icon: "trash-2", displayField: "summary", displayLabel: "Résumé" },
+            { key: "do-read-quick", label: "A lire (rapide)", icon: "book-open", displayField: "synth", displayLabel: "Synthèse" },
+            { key: "do-read-long", label: "A lire (long)", icon: "file-text", displayField: "detailed-synth", displayLabel: "Synthèse détaillée" },
+            { key: "do-decide", label: "Arbitrages rapides", icon: "scale", displayField: "choose-points", displayLabel: "Points d'arbitrage" },
+            { key: "do-consult-and-decide", label: "Arbitrages après consultation", icon: "users", displayField: "choose-points", displayLabel: "Points d'arbitrage", extraField: "transmit", extraLabel: "Personne à consulter" },
+            { key: "do-other", label: "A déléguer", icon: "forward", displayField: "synth", displayLabel: "Synthèse", extraField: "transmit", extraLabel: "Personne délégataire" },
+            { key: "do-self", label: "A faire", icon: "user-check", displayField: "synth", displayLabel: "Synthèse" },
+        ];
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            return <i data-lucide={name} className={className} style={{ width: size, height: size }}></i>;
+        };
+
+        function App() {
+            const [isDark, setIsDark] = useState(false);
+            const [rootHandle, setRootHandle] = useState(null);
+            const [emails, setEmails] = useState([]);
+            const [searchTerm, setSearchTerm] = useState("");
+            const [selectedMail, setSelectedMail] = useState(null);
+            const [decisions, setDecisions] = useState({});
+            const [activeSubdir, setActiveSubdir] = useState("trash");
+            const [expandedCard, setExpandedCard] = useState(null);
+            const [counts, setCounts] = useState({});
+
+            const activeConfig = SUBDIRS.find(s => s.key === activeSubdir);
+
+            useEffect(() => {
+                if (isDark) document.documentElement.classList.add('dark');
+                else document.documentElement.classList.remove('dark');
+            }, [isDark]);
+
+            useEffect(() => {
+                const timer = setTimeout(() => lucide.createIcons(), 50);
+                return () => clearTimeout(timer);
+            }, [activeSubdir, rootHandle, emails, selectedMail, isDark, expandedCard]);
+
+            const loadAllCounts = async (handle) => {
+                const newCounts = {};
+                for (const subdir of SUBDIRS) {
+                    try {
+                        const todoDir = await handle.getDirectoryHandle('todo');
+                        const categoryDir = await todoDir.getDirectoryHandle(subdir.key);
+                        const fileHandle = await categoryDir.getFileHandle('pending_emails.json');
+                        const data = JSON.parse(await (await fileHandle.getFile()).text());
+                        newCounts[subdir.key] = data.length;
+                    } catch (err) {
+                        newCounts[subdir.key] = 0;
+                    }
+                }
+                setCounts(newCounts);
+            };
+
+            const connectFolder = async () => {
+                try {
+                    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+                    setRootHandle(handle);
+                    loadSubdirEmails(handle, activeSubdir);
+                    loadAllCounts(handle);
+                } catch (err) { console.error(err); }
+            };
+
+            const loadSubdirEmails = async (handle, subdirKey) => {
+                try {
+                    const todoDir = await handle.getDirectoryHandle('todo');
+                    const categoryDir = await todoDir.getDirectoryHandle(subdirKey);
+                    const fileHandle = await categoryDir.getFileHandle('pending_emails.json');
+                    const data = JSON.parse(await (await fileHandle.getFile()).text());
+                    setEmails(data);
+                    setDecisions({});
+                    setSearchTerm("");
+                    setExpandedCard(null);
+                    setCounts(prev => ({ ...prev, [subdirKey]: data.length }));
+                } catch (err) {
+                    setEmails([]);
+                    setDecisions({});
+                    setSearchTerm("");
+                    setExpandedCard(null);
+                    setCounts(prev => ({ ...prev, [subdirKey]: 0 }));
+                    console.warn(`Aucun pending_emails.json trouvé dans todo/${subdirKey}/`);
+                }
+            };
+
+            const switchSubdir = (subdirKey) => {
+                setActiveSubdir(subdirKey);
+                setSelectedMail(null);
+                setExpandedCard(null);
+                if (rootHandle) {
+                    loadSubdirEmails(rootHandle, subdirKey);
+                }
+            };
+
+            const filteredEmails = useMemo(() => {
+                const term = searchTerm.toLowerCase();
+                if (!term) return emails;
+                return emails.filter(mail => {
+                    if (mail.sender && mail.sender.toLowerCase().includes(term)) return true;
+                    const mainVal = mail[activeConfig.displayField];
+                    if (mainVal && mainVal.toLowerCase().includes(term)) return true;
+                    if (activeConfig.extraField) {
+                        const extraVal = mail[activeConfig.extraField];
+                        if (extraVal && extraVal.toLowerCase().includes(term)) return true;
+                    }
+                    return false;
+                });
+            }, [emails, searchTerm, activeSubdir]);
+
+            const openAttachment = async (id, fileName) => {
+                try {
+                    const todoDir = await rootHandle.getDirectoryHandle('todo');
+                    const categoryDir = await todoDir.getDirectoryHandle(activeSubdir);
+                    const mailDir = await categoryDir.getDirectoryHandle(id);
+                    const fileHandle = await mailDir.getFileHandle(fileName);
+                    const file = await fileHandle.getFile();
+                    const url = URL.createObjectURL(file);
+                    window.open(url, '_blank');
+                } catch (err) { alert("Impossible d'ouvrir le fichier."); }
+            };
+
+            const openMailDetails = async (id) => {
+                try {
+                    const todoDir = await rootHandle.getDirectoryHandle('todo');
+                    const categoryDir = await todoDir.getDirectoryHandle(activeSubdir);
+                    const mailDir = await categoryDir.getDirectoryHandle(id);
+                    const jsonFile = await mailDir.getFileHandle('message.json');
+                    const detailData = JSON.parse(await (await jsonFile.getFile()).text());
+
+                    const attachments = [];
+                    for await (const entry of mailDir.values()) {
+                        if (entry.kind === 'file' && !entry.name.endsWith('.json') && !entry.name.endsWith('.eml')) {
+                            attachments.push(entry.name);
+                        }
+                    }
+                    setSelectedMail({ ...detailData, id, attachments });
+                } catch (err) { console.error(err); }
+            };
+
+            const bulkAction = (sender, action) => {
+                const newDecisions = { ...decisions };
+                emails.forEach(mail => {
+                    if (mail.sender === sender) newDecisions[mail.id] = action;
+                });
+                setDecisions(newDecisions);
+            };
+
+            const saveInstructions = async () => {
+                const todoDir = await rootHandle.getDirectoryHandle('todo');
+                const categoryDir = await todoDir.getDirectoryHandle(activeSubdir);
+                const result = emails.map(e => ({ id: e.id, action: decisions[e.id] || "keep" }));
+                const fileHandle = await categoryDir.getFileHandle('instructions.json', { create: true });
+                const writable = await fileHandle.createWritable();
+                await writable.write(JSON.stringify(result, null, 2));
+                await writable.close();
+                alert("Instructions enregistrées pour " + activeConfig.label + " !");
+            };
+
+            const getSelectStyle = (mailId) => {
+                const val = decisions[mailId];
+                if (val === 'delete') return 'text-red-500 bg-red-50 dark:bg-red-900/20';
+                if (val === 'other') return 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20';
+                if (val && val !== 'keep') return 'text-amber-600 bg-amber-50 dark:bg-amber-900/20';
+                return 'text-blue-500 bg-blue-50 dark:bg-blue-900/20';
+            };
+
+            const toggleExpand = (mailId, e) => {
+                e.stopPropagation();
+                setExpandedCard(expandedCard === mailId ? null : mailId);
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col">
+                    {/* TOP NAV */}
+                    <nav className="sticky top-0 z-40 glass-nav px-6 py-4 flex justify-between items-center">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-blue-600 p-2 rounded-lg text-white">
+                                <Icon name="bot" />
+                            </div>
+                            <h1 className="font-bold text-xl tracking-tight">
+                                Todomail <span className="text-blue-500 font-light">Dashboard</span>
+                            </h1>
+                        </div>
+
+                        <div className="flex gap-4">
+                            <button onClick={() => setIsDark(!isDark)} className="p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">
+                                <Icon name={isDark ? "sun" : "moon"} />
+                            </button>
+                            <button onClick={connectFolder} className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-5 py-2 rounded-xl font-bold text-sm hover:scale-105 transition-all">
+                                {rootHandle ? "Projet Connecté" : "Ouvrir Projet"}
+                            </button>
+                        </div>
+                    </nav>
+
+                    {/* LAYOUT SIDEBAR + MAIN */}
+                    <div className="flex flex-1">
+
+                        {/* SIDEBAR NAVIGATION VERTICALE */}
+                        {rootHandle && (
+                            <aside className="w-64 min-w-[16rem] bg-white dark:bg-darkSidebar border-r border-slate-200 dark:border-slate-800 p-4 flex flex-col gap-1.5 animate-slide-up sticky top-[73px] h-[calc(100vh-73px)] overflow-y-auto scrollbar-hide">
+                                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 px-3">Catégories</div>
+                                {SUBDIRS.map(subdir => {
+                                    const isActive = activeSubdir === subdir.key;
+                                    return (
+                                        <button
+                                            key={subdir.key}
+                                            onClick={() => switchSubdir(subdir.key)}
+                                            className={`flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold transition-all w-full text-left ${
+                                                isActive
+                                                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
+                                                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-500'
+                                            }`}
+                                        >
+                                            <Icon name={subdir.icon} size={18} />
+                                            <span className="flex-1">{subdir.label}</span>
+                                            {(counts[subdir.key] || 0) > 0 && (
+                                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                                    isActive
+                                                        ? 'bg-white/20'
+                                                        : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                                                }`}>
+                                                    {counts[subdir.key]}
+                                                </span>
+                                            )}
+                                        </button>
+                                    );
+                                })}
+                            </aside>
+                        )}
+
+                        {/* ZONE PRINCIPALE */}
+                        <main className="flex-1 pb-32 px-6 pt-6">
+                            <div className="max-w-4xl mx-auto">
+
+                                {/* BARRE DE RECHERCHE */}
+                                {rootHandle && (
+                                    <div className="mb-8 animate-slide-up">
+                                        <div className="relative group">
+                                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-500 transition-colors">
+                                                <Icon name="search" size={18} />
+                                            </div>
+                                            <input
+                                                type="text"
+                                                placeholder={`Filtrer dans ${activeConfig.label}...`}
+                                                value={searchTerm}
+                                                onChange={(e) => setSearchTerm(e.target.value)}
+                                                className="w-full bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-2xl py-4 pl-12 pr-4 shadow-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
+                                            />
+                                            {searchTerm && (
+                                                <div className="absolute inset-y-0 right-4 flex items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                                    {filteredEmails.length} résultat(s)
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="space-y-3">
+                                    {filteredEmails.map((mail) => {
+                                        const isExpanded = expandedCard === mail.id;
+                                        return (
+                                        <div key={mail.id} className="animate-slide-up bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-2xl group hover:shadow-xl transition-all">
+                                            {/* LIGNE PRINCIPALE DE LA CARTE */}
+                                            <div className="flex items-center">
+                                                <div className="flex-1 p-5 cursor-pointer" onClick={() => openMailDetails(mail.id)}>
+                                                    <div className="flex items-center gap-3 mb-1">
+                                                        <span className="font-bold text-slate-800 dark:text-slate-100">{mail.sender}</span>
+                                                        <span className="text-[10px] text-slate-400 font-mono">{mail.date}</span>
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); bulkAction(mail.sender, 'delete'); }}
+                                                            className="hidden group-hover:flex items-center gap-1 text-[10px] bg-red-100 dark:bg-red-900/30 text-red-600 px-2 py-0.5 rounded-full font-bold transition-all"
+                                                        >
+                                                            <Icon name="zap" size={10} /> Tout supprimer
+                                                        </button>
+                                                    </div>
+                                                    <p className="text-sm text-slate-500 line-clamp-2">{mail[activeConfig.displayField] || "\u2014"}</p>
+                                                    {activeConfig.extraField && mail[activeConfig.extraField] && (
+                                                        <p className="text-xs text-blue-500 mt-1 flex items-center gap-1">
+                                                            <Icon name="at-sign" size={12} />
+                                                            {activeConfig.extraLabel} : {mail[activeConfig.extraField]}
+                                                        </p>
+                                                    )}
+                                                    {mail["agenda-info"] && (
+                                                        <div className="mt-1.5 inline-flex items-center gap-1.5">
+                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
+                                                                mail["agenda-info"].disponibilite === "conflit"
+                                                                    ? "bg-red-100 dark:bg-red-900/30 text-red-600"
+                                                                    : mail["agenda-info"].disponibilite === "possiblement libre"
+                                                                        ? "bg-amber-100 dark:bg-amber-900/30 text-amber-600"
+                                                                        : "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600"
+                                                            }`}>
+                                                                <Icon name="calendar" size={10} />
+                                                                {mail["agenda-info"].type === "demande-rdv" ? "Demande RDV" :
+                                                                 mail["agenda-info"].type === "invitation" ? "Invitation" :
+                                                                 mail["agenda-info"].type === "changement" ? "Changement" :
+                                                                 mail["agenda-info"].type === "annulation" ? "Annulation" :
+                                                                 mail["agenda-info"].type === "proposition-creneau" ? "Proposition" :
+                                                                 mail["agenda-info"].type === "rappel" ? "Rappel" : mail["agenda-info"].type}
+                                                                {" \u2014 "}
+                                                                {mail["agenda-info"].disponibilite === "conflit" ? "\u26A0 Conflit" :
+                                                                 mail["agenda-info"].disponibilite === "possiblement libre" ? "Possiblement libre" :
+                                                                 "\u2713 Disponible"}
+                                                            </span>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                <div className="p-5 flex items-center gap-3">
+                                                    {/* Bouton déplier */}
+                                                    <button
+                                                        onClick={(e) => toggleExpand(mail.id, e)}
+                                                        className={`p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-blue-500 transition-all ${isExpanded ? 'text-blue-500 bg-blue-50 dark:bg-blue-900/20' : ''}`}
+                                                        title="Voir le détail des champs"
+                                                    >
+                                                        <Icon name={isExpanded ? "chevron-up" : "chevron-down"} size={18} />
+                                                    </button>
+                                                    <select
+                                                        value={decisions[mail.id] || "keep"}
+                                                        onChange={(e) => setDecisions({...decisions, [mail.id]: e.target.value})}
+                                                        className={`text-xs font-bold p-2 rounded-lg border-none outline-none cursor-pointer transition-colors ${getSelectStyle(mail.id)}`}
+                                                    >
+                                                        <option value="keep">GARDER</option>
+                                                        {activeSubdir !== 'trash' && (
+                                                            <option value="other">TRAITER</option>
+                                                        )}
+                                                        {activeSubdir === 'trash' ? (
+                                                            <option value="delete">SUPPRIMER</option>
+                                                        ) : (
+                                                            <option value="delete">METTRE A LA CORBEILLE</option>
+                                                        )}
+                                                        {SUBDIRS.filter(s => s.key !== activeSubdir && s.key !== 'trash').map(s => (
+                                                            <option key={s.key} value={s.key}>{"-> " + s.label}</option>
+                                                        ))}
+                                                    </select>
+                                                    <button onClick={() => openMailDetails(mail.id)} className="text-slate-300 hover:text-blue-500 p-2" title="Voir le mail complet">
+                                                        <Icon name="chevron-right" />
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            {/* ZONE DÉPLIABLE (FLY-OVER) */}
+                                            <div className={`card-expand ${isExpanded ? 'open' : ''}`}>
+                                                <div className="px-5 pb-5 pt-1 border-t border-slate-100 dark:border-slate-800">
+                                                    <div className="mt-3 space-y-3">
+                                                        {/* Champ principal */}
+                                                        <div>
+                                                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">{activeConfig.displayLabel}</div>
+                                                            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
+                                                                {mail[activeConfig.displayField] || "\u2014"}
+                                                            </p>
+                                                        </div>
+                                                        {/* Champ extra (ex: transmit pour do-consult-and-decide) */}
+                                                        {activeConfig.extraField && mail[activeConfig.extraField] && (
+                                                            <div>
+                                                                <div className="text-[10px] font-black uppercase tracking-widest text-blue-500 mb-1">{activeConfig.extraLabel}</div>
+                                                                <p className="text-sm text-blue-600 dark:text-blue-400 leading-relaxed">
+                                                                    {mail[activeConfig.extraField]}
+                                                                </p>
+                                                            </div>
+                                                        )}
+                                                        {/* Champ agenda-info */}
+                                                        {mail["agenda-info"] && (
+                                                            <div className={`p-3 rounded-xl border ${
+                                                                mail["agenda-info"].disponibilite === "conflit"
+                                                                    ? "bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800"
+                                                                    : mail["agenda-info"].disponibilite === "possiblement libre"
+                                                                        ? "bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800"
+                                                                        : "bg-emerald-50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800"
+                                                            }`}>
+                                                                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 flex items-center gap-1">
+                                                                    <Icon name="calendar" size={12} /> Informations agenda
+                                                                </div>
+                                                                <div className="space-y-1 text-xs">
+                                                                    {mail["agenda-info"]["dates-proposees"] && mail["agenda-info"]["dates-proposees"].length > 0 && (
+                                                                        <p><span className="font-bold text-slate-500">Créneau(x) proposé(s) :</span> {mail["agenda-info"]["dates-proposees"].join(", ")}</p>
+                                                                    )}
+                                                                    <p><span className="font-bold text-slate-500">Disponibilité :</span> <span className={
+                                                                        mail["agenda-info"].disponibilite === "conflit" ? "text-red-600 font-bold" :
+                                                                        mail["agenda-info"].disponibilite === "possiblement libre" ? "text-amber-600 font-bold" :
+                                                                        "text-emerald-600 font-bold"
+                                                                    }>{mail["agenda-info"].disponibilite}</span></p>
+                                                                    {mail["agenda-info"]["conflit-detail"] && (
+                                                                        <p><span className="font-bold text-red-500">Conflit :</span> {mail["agenda-info"]["conflit-detail"]}</p>
+                                                                    )}
+                                                                    {mail["agenda-info"]["creneaux-alternatifs"] && mail["agenda-info"]["creneaux-alternatifs"].length > 0 && (
+                                                                        <p><span className="font-bold text-blue-500">Alternatives :</span> {mail["agenda-info"]["creneaux-alternatifs"].join(" | ")}</p>
+                                                                    )}
+                                                                    {mail["agenda-info"].coherence && mail["agenda-info"].coherence !== "cohérent" && (
+                                                                        <p><span className="font-bold text-amber-500">Cohérence :</span> {mail["agenda-info"].coherence}</p>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        );
+                                    })}
+
+                                    {/* ÉTAT VIDE */}
+                                    {rootHandle && filteredEmails.length === 0 && (
+                                        <div className="py-20 text-center animate-slide-up">
+                                            <div className="inline-flex p-4 bg-slate-100 dark:bg-slate-800 rounded-full text-slate-400 mb-4">
+                                                <Icon name="search-x" size={32} />
+                                            </div>
+                                            <p className="text-slate-500 font-medium">
+                                                {searchTerm ? "Aucun mail ne correspond à votre recherche." : "Aucun mail dans cette catégorie."}
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </main>
+                    </div>
+
+                    {/* BARRE DE VALIDATION */}
+                    {emails.length > 0 && (
+                        <div className="fixed bottom-0 left-0 right-0 p-6 glass-nav flex justify-center border-t border-slate-200 dark:border-slate-800 shadow-[0_-10px_20px_rgba(0,0,0,0.05)] z-30">
+                            <button onClick={saveInstructions} className="bg-blue-600 text-white px-12 py-4 rounded-2xl font-black shadow-2xl hover:bg-blue-700 hover:scale-105 active:scale-95 transition-all">
+                                {"VALIDER LES ORDRES \u2014 " + activeConfig.label.toUpperCase()}
+                            </button>
+                        </div>
+                    )}
+
+                    {/* MODAL */}
+                    {selectedMail && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md bg-slate-950/40">
+                            <div className="bg-white dark:bg-darkCard w-full max-w-4xl max-h-[90vh] rounded-[2rem] shadow-2xl overflow-hidden flex flex-col animate-slide-up border border-white/10">
+                                <div className="p-8 border-b dark:border-slate-800 flex justify-between items-start">
+                                    <div>
+                                        <h2 className="text-2xl font-black leading-tight mb-2">{selectedMail.subject || "Sans objet"}</h2>
+                                        <div className="space-y-1">
+                                            <div className="flex items-center gap-2 text-sm text-blue-500 font-bold">
+                                                <Icon name="user" size={14} /> DE : {selectedMail.from || selectedMail.sender}
+                                            </div>
+                                            <div className="text-[10px] text-slate-400 font-mono italic uppercase tracking-widest">
+                                                ID: {selectedMail.id}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <button onClick={() => setSelectedMail(null)} className="p-3 bg-slate-100 dark:bg-slate-800 rounded-full hover:bg-slate-200 transition-all">
+                                        <Icon name="x" />
+                                    </button>
+                                </div>
+
+                                <div className="flex-1 overflow-y-auto p-8 bg-slate-50/30 dark:bg-slate-900/20">
+                                    <div className="font-mono text-sm leading-relaxed whitespace-pre-wrap text-slate-600 dark:text-slate-300 border-l-4 border-blue-500/20 pl-6">
+                                        {selectedMail.body_text}
+                                    </div>
+                                </div>
+
+                                {selectedMail.attachments?.length > 0 && (
+                                    <div className="p-8 bg-white dark:bg-darkCard border-t dark:border-slate-800">
+                                        <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 italic">Pièces Jointes (Cliquer pour ouvrir)</h3>
+                                        <div className="flex flex-wrap gap-3">
+                                            {selectedMail.attachments.map(name => (
+                                                <button
+                                                    key={name}
+                                                    onClick={() => openAttachment(selectedMail.id, name)}
+                                                    className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800 px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-blue-500 hover:bg-white dark:hover:bg-slate-700 transition-all shadow-sm group"
+                                                >
+                                                    <Icon name="file" size={16} className="text-blue-500 group-hover:scale-110 transition-transform" />
+                                                    <span className="text-xs font-bold truncate max-w-[150px]">{name}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
