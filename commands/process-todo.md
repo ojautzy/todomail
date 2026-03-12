@@ -145,10 +145,10 @@ Traiter **séquentiellement**, **un mail à la fois**, les mails de la file de t
 > |--------|---------|
 > | `.json`, `.txt`, `.md`, `.html`, `.csv` | `Read` directement |
 > | `.pdf` | `Read` directement (rendu natif) |
-> | `.docx` | Utiliser le skill **docx** (section « Reading Content ») |
-> | `.xlsx` | Utiliser le skill **xlsx** (section « Reading and analyzing data ») |
-> | `.pptx` | Utiliser le skill **pptx** (section « Reading Content ») |
-> | `.odt`, `.ods`, `.odp` | Utiliser le skill **read-odf** du plugin |
+> | `.docx` | Utiliser le skill plateforme **docx** (section « Reading Content ») |
+> | `.xlsx` | Utiliser le skill plateforme **xlsx** (section « Reading and analyzing data ») |
+> | `.pptx` | Utiliser le skill plateforme **pptx** (section « Reading Content ») |
+> | `.odt`, `.ods`, `.odp` | Utiliser le skill plugin **read-odf** |
 > | Autres formats binaires | Ignorer, mentionner comme « pièce jointe non lisible : [nom] » |
 
 Pour chaque mail traité dans cette étape, afficher en début de traitement :
