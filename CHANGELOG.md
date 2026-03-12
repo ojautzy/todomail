@@ -1,0 +1,82 @@
+# Changelog
+
+Toutes les modifications notables de ce projet sont documentées dans ce fichier.
+
+Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
+et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
+
+---
+
+## [0.31.0] - 2026-03-03
+
+### Ajouté
+- **Nouvel agent `mail-analyzer`** — Agent autonome qui analyse un mail unique dans un contexte isolé : lecture du mail et de toutes les pièces jointes, contextualisation RAG, classification, détection agenda avec vérification de disponibilité et de conflits, production de synthèses multi-niveaux. Produit un fichier `_analysis.json` dans le répertoire du mail.
+
+### Modifié
+- **sort-mails v1.0.0** — Refonte complète du flux de tri. Les mails sont désormais analysés en parallèle par des agents `mail-analyzer` indépendants (un par mail), puis triés et les `pending_emails.json` générés exclusivement à partir des `_analysis.json`. Suppression de la triple lecture des mails. Suppression de la vérification par sondage (rendue inutile par l'isolation des contextes). Ajout de `Task` dans les `allowed-tools`.
+- **Gains de performance** — Réduction drastique de la consommation de contexte, exécution parallèle des analyses, élimination des compressions de contexte en cours d'exécution.
+- **README.md** — Ajout de la section Agents dans l'architecture, mise à jour de l'arborescence, cycle de vie des `pending_emails.json`.
+
+---
+
+## [0.30.0] - 2026-02-28
+
+### Modifié
+- **process-todo** — Traitement automatique après déplacement inter-catégories : lorsqu'un mail est reclassé via le dashboard vers une autre catégorie, il est désormais automatiquement traité comme une action `other` dans la catégorie de destination. Les déplacements vers `do-read-quick` sont traités immédiatement (archivage). Les déplacements vers les autres catégories sont mis en file d'attente via `todo/_deferred.json`. Le champ `agenda-info` est explicitement recopié lors des déplacements inter-catégories.
+
+---
+
+## [0.29.0] - 2026-02-25
+
+### Corrigé
+- Correction du nommage `/check_agenda` → `/check-agenda` dans tous les fichiers (cohérence kebab-case).
+- Ajout de `AskUserQuestion` dans les `allowed-tools` du skill `agenda`.
+- Correction du skill `disponibilites` : ajout d'un appel `fetch_calendar_events` (étape 1b) pour calculer les buffers de déplacement.
+- Harmonisation de la taille cible de CLAUDE.md à ~250 lignes dans le skill `memory-management`.
+
+### Modifié
+- **dashboard.html** — Affichage des informations `agenda-info` : badge compact dans la carte principale et panneau détaillé dans la section dépliable.
+- **process-todo** — Exploitation du champ `agenda-info` dans les 4 handlers d'actions complexes.
+- **start** — Ajout de la création de `memory/context/preferences-agenda.md` lors du bootstrap calendrier.
+- **/briefing** — Ajout d'une étape de mise à jour de la mémoire. Ajout de `Task` dans les `allowed-tools`.
+- **/check-agenda** — Ajout d'une étape de mise à jour de la mémoire.
+- **CONNECTORS.md** — Refonte du tableau d'utilisation des tools.
+
+### Optimisé
+- **sort-mails** — Pré-chargement calendrier unique sur 14 jours au lieu d'appels redondants par mail.
+- Externalisation de la géographie : remplacement des données codées en dur par des références à la mémoire.
+
+---
+
+## [0.28.0] - 2026-02-22
+
+### Ajouté
+- **Skill `agenda` v1.0.0** — Connaissance du programme de l'utilisateur (consultation calendrier, enrichissement contextuel, détection conflits, signalement déplacements).
+- **Skill `disponibilites` v1.0.0** — Connaissance des créneaux libres avec filtres contextuels.
+- **Skill `detection-conflits` v1.0.0** — Détection des conflits, superpositions, temps de déplacement insuffisant et surcharge.
+- **Commande `/briefing`** — Génération de dossiers de préparation pour les réunions.
+- **Commande `/check-agenda`** — Audit de cohérence et faisabilité de l'agenda avec rapport structuré.
+- **sort-mails v0.15.0** — Détection des mails liés à l'agenda. Enrichissement automatique avec vérification de disponibilité et détection de conflits. Ajout du champ optionnel `agenda-info`.
+- **memory-management v0.3.0** — Ajout des sections mémoire calendrier : réunions récurrentes, lieux fréquents, préférences agenda.
+- **start** — Ajout du répertoire `to-brief/`, bootstrap calendriers, nouvelles sections CLAUDE.md.
+- **CONNECTORS.md** — Ajout des tools calendrier et du tableau d'utilisation par composant.
+
+---
+
+## [0.27.0] - 2026-02-18
+
+### Modifié
+- **sort-mails v0.14.0** — Si inbox est vide, ne plus purger ni régénérer les `pending_emails.json` existants (préservation des synthèses).
+- **process-todo** — Mise à jour du `pending_emails.json` de la catégorie destination lors des déplacements inter-catégories. Remplacement de la suppression des `instructions.json` par un écrasement avec `[]`.
+- **memory-management v0.2.0** — Enrichissement de la description avec des phrases de déclenchement. Ajout de `process-todo` dans la section intégration.
+
+### Corrigé
+- **README.dashboard.md** — Correction du libellé de l'action `delete`.
+
+---
+
+## [0.26.0] - 2026-02-15
+
+### Modifié
+- **sort-mails v0.13.0** — Ajout d'une purge préalable des `pending_emails.json` en début d'Étape 2.
+- **process-todo** — Mise à jour incrémentale des `pending_emails.json` au fil de l'eau au lieu d'une régénération complète en Étape 4.
