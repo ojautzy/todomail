@@ -36,7 +36,7 @@ Le plugin s'appuie sur un connecteur MCP  (`~~todomail-mcp`) qui fournit les too
 - `get_availability` — Calcul des créneaux libres (fusion d'intervalles, heures ouvrables configurables)
 - `sync_calendars` — Rafraîchissement des flux ICS (tâche de fond)
 
-Ces tools sont utilisés par les skills `agenda`, `disponibilites`, `detection-conflits`, par l'agent `mail-analyzer` et par les commandes `/briefing` et `/check-agenda`.
+Ces tools sont utilisés par les skills `agenda`, `disponibilites`, `detection-conflits`, par les agents `mail-analyzer` et `todo-processor`, et par les commandes `/briefing` et `/check-agenda`.
 
 **Note :** Le plugin est en **lecture seule** sur les agendas. Aucune modification, création ou suppression d'événement n'est effectuée.
 
@@ -44,19 +44,19 @@ Ces tools sont utilisés par les skills `agenda`, `disponibilites`, `detection-c
 
 Les tools sont utilisés directement ou indirectement (via des skills ou des agents) par les composants suivants. Les appels indirects sont marqués par `(i)`.
 
-| Tool | sort-mails | mail-analyzer | process-todo | agenda | disponibilites | detection-conflits | /check-inbox | /briefing | /check-agenda | /start |
-|------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| `check_inbox` | | | | | | | ✓ | | | |
-| `update_index` | | | | | | | ✓ | | | |
-| `search_mail` | (i) | ✓ | ✓ | ✓ | | | (i) | ✓ | | ✓ |
-| `search_doc` | (i) | ✓ | ✓ | ✓ | | | (i) | ✓ | | ✓ |
-| `search_all` | (i) | ✓ | ✓ | ✓ | | | (i) | ✓ | | ✓ |
-| `list_calendars` | | | | ✓ | | | | | | ✓ |
-| `fetch_calendar_events` | (i) | ✓ | | ✓ | ✓ | | | (i) | (i) | ✓ |
-| `get_availability` | (i) | ✓ | | | ✓ | | | (i) | (i) | |
-| `sync_calendars` | | | | ✓ | | | | | | ✓ |
+| Tool | sort-mails | mail-analyzer | todo-processor | process-todo | agenda | disponibilites | detection-conflits | /check-inbox | /briefing | /check-agenda | /start |
+|------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| `check_inbox` | | | | | | | | ✓ | | | |
+| `update_index` | | | | | | | | ✓ | | | |
+| `search_mail` | (i) | ✓ | ✓ | (i) | ✓ | | | (i) | ✓ | | ✓ |
+| `search_doc` | (i) | ✓ | ✓ | (i) | ✓ | | | (i) | ✓ | | ✓ |
+| `search_all` | (i) | ✓ | ✓ | (i) | ✓ | | | (i) | ✓ | | ✓ |
+| `list_calendars` | | | | | ✓ | | | | | | ✓ |
+| `fetch_calendar_events` | (i) | ✓ | | | ✓ | ✓ | | | (i) | (i) | ✓ |
+| `get_availability` | (i) | ✓ | | | | ✓ | | | (i) | (i) | |
+| `sync_calendars` | | | | | ✓ | | | | | | ✓ |
 
-**Légende :** ✓ = appel direct du tool MCP | (i) = appel indirect via un agent ou un skill intermédiaire (sort-mails délègue à l'agent `mail-analyzer` via `Task` ; /briefing et /check-agenda appellent les skills `agenda`, `disponibilites`, `detection-conflits`)
+**Légende :** ✓ = appel direct du tool MCP | (i) = appel indirect via un agent ou un skill intermédiaire (sort-mails délègue à l'agent `mail-analyzer` via `Task` ; process-todo délègue à l'agent `todo-processor` via `Task` ; /briefing et /check-agenda appellent les skills `agenda`, `disponibilites`, `detection-conflits`)
 
 Le connecteur RAG permet notamment de :
 
