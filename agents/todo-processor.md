@@ -18,7 +18,7 @@ description: >
   </commentary>
   </example>
 
-model: sonnet
+model: opus
 color: green
 tools:
   - Read

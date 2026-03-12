@@ -7,6 +7,13 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [0.32.1] - 2026-03-12
+
+### Modifié
+- **todo-processor** — Passage du modèle Sonnet à Opus pour améliorer la qualité d'analyse et de rédaction.
+
+---
+
 ## [0.32.0] - 2026-03-12
 
 ### Ajouté
