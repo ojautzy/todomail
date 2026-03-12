@@ -44,6 +44,7 @@ Principe : si Claude doit pouvoir utiliser une capacité de sa propre initiative
 | Agent | Description |
 |-------|-------------|
 | `mail-analyzer` | Analyse exhaustive d'un mail unique dans un contexte isolé : lecture du mail et des PJ, contextualisation RAG, classification, détection agenda avec vérification de disponibilité, production de synthèses multi-niveaux. Produit un `_analysis.json` exploité par `sort-mails`. |
+| `todo-processor` | Traitement d'un mail unique pour `process-todo` dans un contexte isolé. Trois modes : « autonomous » (traitement complet do-read-long), « analyze » (Phase 1 d'analyse et proposition pour les catégories interactives), « finalize » (Phase 2 d'archivage et finalisation après validation utilisateur). Produit un `_treatment.json` exploité par `process-todo`. |
 
 ## Dashboard interactif
 

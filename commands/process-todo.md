@@ -1,6 +1,6 @@
 ---
 description: Exécuter les instructions du dashboard sur les mails triés
-allowed-tools: Read, Write, Bash(mkdir:*), Bash(mv:*), Bash(ls:*), Bash(cp:*), Bash(python3:*), Glob, Grep, AskUserQuestion, mcp
+allowed-tools: Read, Write, Bash(mkdir:*), Bash(mv:*), Bash(ls:*), Bash(cp:*), Bash(python3:*), Glob, Grep, AskUserQuestion, Task, mcp
 ---
 
 # Process Todo — Exécution des instructions du dashboard
@@ -117,216 +117,216 @@ Actions simples terminées :
 Passage au traitement des actions complexes...
 ```
 
-## Étape 3 — Exécution des actions `other` complexes
+## Étape 3 — Exécution des actions `other` complexes (via agent `todo-processor`)
 
-### Constitution de la file de traitement
+Le traitement de chaque mail est délégué à l'agent `todo-processor` via `Task`, dans un contexte isolé. Cela évite l'accumulation de contexte lorsque de nombreux mails sont à traiter. L'agent applique les mêmes règles anti-hallucination (lecture obligatoire des fichiers sources) dans son propre contexte.
+
+Les ARRÊTS OBLIGATOIRES restent dans le contexte principal de `process-todo` : les propositions produites par les agents sont présentées à l'utilisateur ici, et ses validations sont transmises aux agents de finalisation.
+
+### Étape 3a — Constitution de la file de traitement
 
 Constituer la file de traitement en combinant deux sources :
 1. **Actions `other` classiques :** les mails dont l'action est `other` dans les `instructions.json`, tels que collectés en Étape 1.
 2. **Traitements différés post-déplacement :** lire le fichier `todo/_deferred.json` (s'il existe et n'est pas vide). Pour chaque entrée, le mail se trouve dans `todo/{destination}/{id}/` et doit être traité avec le handler `other` de la catégorie `{destination}`.
 
-Ordre de traitement recommandé :
-1. D'abord les traitements **autonomes** (actions `other` de `do-read-long`, qu'elles soient classiques ou différées) — pas d'interaction requise.
-2. Puis les traitements **interactifs** (actions `other` de `do-decide`, `do-consult-and-decide`, `do-other`, `do-self`, qu'ils soient classiques ou différés) — séquentiellement, avec les ARRÊTS OBLIGATOIRES habituels.
+Partitionner la file en deux groupes :
+- **file_autonome** : mails de catégorie `do-read-long`
+- **file_interactive** : mails de catégories `do-decide`, `do-consult-and-decide`, `do-other`, `do-self`
 
-Traiter **séquentiellement**, **un mail à la fois**, les mails de la file de traitement.
+Pour chaque mail de la file interactive, lire l'entrée correspondante dans le `pending_emails.json` de sa catégorie pour extraire le champ `agenda-info` (s'il existe).
 
-> **OBLIGATION DE LECTURE DIRECTE — ANTI-HALLUCINATION**
->
-> **Il est formellement interdit de produire un arbitrage, une synthèse, un plan d'action, un livrable ou tout contenu dérivé d'un mail sans avoir effectivement lu le fichier source avec un outil (`Read` ou `Bash`) au cours de cette étape.**
->
-> - Pour chaque mail traité, **lire effectivement** le fichier `message.json` et **lire effectivement chaque pièce jointe** avant de procéder à l'analyse ou à la rédaction.
-> - **Ne pas utiliser de sous-agents (`Task`)** pour cette étape. Tout le travail doit être réalisé dans le contexte principal.
-> - Si une pièce jointe ne peut pas être lue (format inconnu, fichier corrompu), le mentionner explicitement comme « pièce jointe non lisible : [nom du fichier] ».
->
-> **Méthodes de lecture par format de pièce jointe :**
->
-> | Format | Méthode |
-> |--------|---------|
-> | `.json`, `.txt`, `.md`, `.html`, `.csv` | `Read` directement |
-> | `.pdf` | `Read` directement (rendu natif) |
-> | `.docx` | Utiliser le skill plateforme **docx** (section « Reading Content ») |
-> | `.xlsx` | Utiliser le skill plateforme **xlsx** (section « Reading and analyzing data ») |
-> | `.pptx` | Utiliser le skill plateforme **pptx** (section « Reading Content ») |
-> | `.odt`, `.ods`, `.odp` | Utiliser le skill plugin **read-odf** |
-> | Autres formats binaires | Ignorer, mentionner comme « pièce jointe non lisible : [nom] » |
+### Étape 3b — Lancement parallèle Phase 1
 
-Pour chaque mail traité dans cette étape, afficher en début de traitement :
+Lancer l'agent `todo-processor` en parallèle sur **tous** les mails des deux files via l'outil `Task`. Chaque appel `Task` reçoit comme prompt :
+
+**Pour les mails de la file_autonome :**
+```
+Traite le mail situé dans le répertoire <chemin_absolu_du_sous-répertoire>.
+Mode : autonomous
+Catégorie : do-read-long
+Répertoire de travail : <chemin_absolu_du_répertoire_de_travail>
+Chemin du script read-odf : ${CLAUDE_PLUGIN_ROOT}/skills/read-odf/scripts/read_odf.py
+Agenda-info : <objet JSON agenda-info ou null>
+Lis le fichier de l'agent : @${CLAUDE_PLUGIN_ROOT}/agents/todo-processor.md
+Suis les instructions de l'agent pour produire le fichier _treatment.json.
+```
+
+**Pour les mails de la file_interactive :**
+```
+Traite le mail situé dans le répertoire <chemin_absolu_du_sous-répertoire>.
+Mode : analyze
+Catégorie : <catégorie>
+Répertoire de travail : <chemin_absolu_du_répertoire_de_travail>
+Chemin du script read-odf : ${CLAUDE_PLUGIN_ROOT}/skills/read-odf/scripts/read_odf.py
+Agenda-info : <objet JSON agenda-info ou null>
+Lis le fichier de l'agent : @${CLAUDE_PLUGIN_ROOT}/agents/todo-processor.md
+Suis les instructions de l'agent pour produire le fichier _treatment.json.
+```
+
+**Lancer tous les appels `Task` dans un même tour** pour maximiser le parallélisme. Attendre la fin de tous les agents avant de poursuivre.
+
+Après la fin de tous les agents, vérifier que chaque sous-répertoire de mail contient bien un fichier `_treatment.json`. Si un `_treatment.json` est manquant (échec d'un agent), consigner l'erreur et exclure ce mail du traitement — il restera dans sa catégorie pour un traitement ultérieur.
+
+### Étape 3c — Collecte des résultats autonomes
+
+Pour chaque mail de la file_autonome dont le `_treatment.json` existe :
+1. Lire le fichier `_treatment.json`
+2. Si `status` est `"success"` : retirer l'entrée correspondante (par `id`) du `pending_emails.json` de la catégorie source et réécrire le fichier
+3. Si `status` est `"error"` : consigner l'erreur, le mail reste en place
+
+Afficher un résumé des traitements autonomes :
+```
+Traitements autonomes (do-read-long) : N succès, N erreurs
+```
+
+### Étape 3d — Validation séquentielle des propositions (ARRÊTS OBLIGATOIRES)
+
+Traiter **séquentiellement**, **un mail à la fois**, les mails de la file_interactive dont le `_treatment.json` existe, dans l'ordre suivant : d'abord `do-decide`, puis `do-consult-and-decide`, puis `do-other`, puis `do-self`.
+
+Pour chaque mail, afficher en début de traitement :
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Traitement mail {N}/{total} — {id}
+Validation mail {N}/{total} — {id}
 Catégorie : {catégorie}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 Pour les mails issus d'un déplacement (traitements différés), enrichir le bandeau :
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Traitement mail {N}/{total} — {id}
+Validation mail {N}/{total} — {id}
 Catégorie : {destination} (reclassé depuis {source})
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-### Action `other` dans `do-read-long`
+Puis lire le `_treatment.json` et présenter la proposition selon la catégorie :
 
-1. **Archiver le mail :** Renommer `message.eml` en `{id}.eml`, extraire AAAA/MM depuis l'id, créer `mails/AAAA/MM/` si nécessaire, déplacer le fichier renommé dans `mails/AAAA/MM/`
-2. **Classer les pièces jointes :** Lire chaque pièce jointe du sous-répertoire `{id}/`. Pour chacune, utiliser le tool MCP `search_doc` de `~~todomail-mcp` pour rechercher des documents similaires dans la base documentaire. Déterminer dans quel répertoire de `docs/` la pièce jointe devrait être stockée (en se basant sur les résultats de la recherche : même thématique, même type de document). Déplacer la pièce jointe dans le répertoire identifié.
-3. **Nettoyer :** Déplacer l'ensemble du sous-répertoire `{id}` dans `to-clean-by-user/`
-4. **Mettre à jour la mémoire :** Utiliser le skill `memory-management` pour mettre à jour la mémoire si de nouvelles connaissances pertinentes ont été identifiées (nouveau sujet, nouveau collaborateur, nouvelle thématique) et pour mettre à jour les préférences ou habitudes de l'utilisateur (en particulier sur les décisions prises)
-5. **Mettre à jour le pending_emails.json :** Lire le fichier `pending_emails.json` de la catégorie source, retirer l'entrée correspondante (par `id`), et réécrire le fichier avec le tableau mis à jour (qui peut être `[]` si c'était le dernier mail)
+#### do-decide
 
-### Action `other` dans `do-decide`
-
-**Phase 1 — Analyse et rédaction** (exécution autonome)
-
-1. **Analyser :** Lire le corps du message (`message.json`) et les pièces jointes éventuelles
-2. **Contextualiser :** Utiliser le skill `memory-management` (lookup flow complet : CLAUDE.md → memory/ → MCP `~~todomail-mcp` via `search_all`) pour rechercher toutes connaissances utiles sur le dossier, le sujet ou la thématique sur laquelle il est demandé d'arbitrer
-3. **Exploiter `agenda-info` (si présent) :** Si l'entrée du mail dans le `pending_emails.json` contient un champ `agenda-info`, intégrer ces informations dans l'analyse :
-   - Si `disponibilite` = "disponible" : mentionner la disponibilité confirmée dans le projet d'arbitrage
-   - Si `disponibilite` = "conflit" : intégrer le détail du conflit (`conflit-detail`) et les créneaux alternatifs (`creneaux-alternatifs`) comme éléments de contexte dans l'arbitrage
-   - Si `coherence` signale des écarts : les mentionner comme point d'attention
-4. **Rédiger un projet d'arbitrage :** Produire un document markdown structuré contenant :
-   - Le contexte du dossier
-   - La demande d'arbitrage
-   - Les options identifiées avec avantages et inconvénients
-   - La recommandation argumentée
-
----
+Afficher le projet d'arbitrage contenu dans `proposal.draft`.
 
 > **ARRÊT OBLIGATOIRE — Validation du projet d'arbitrage**
 > Afficher immédiatement le projet d'arbitrage complet à l'utilisateur.
 > Poser la question suivante de manière visible :
 >
-> **"Projet d'arbitrage pour le mail {id} ({expéditeur}) — Validez-vous ce projet ?**
+> **"Projet d'arbitrage pour le mail {id} ({analysis.sender}) — Validez-vous ce projet ?**
 > **Répondez OUI pour valider et enregistrer, ou indiquez vos modifications."**
 >
-> **NE PAS passer à la Phase 2 avant d'avoir reçu une réponse explicite de l'utilisateur.**
+> **NE PAS poursuivre avant d'avoir reçu une réponse explicite de l'utilisateur.**
 > **Cesser toute exécution. Attendre.**
 
----
+Conserver la réponse de l'utilisateur (validation ou contenu modifié) pour l'étape 3e.
 
-**Phase 2 — Enregistrement et finalisation** (après réception de la validation)
+#### do-consult-and-decide
 
-4. **Enregistrer :** Sauvegarder le projet d'arbitrage validé dans `to-send/{nom_destinataire}_{numéro_ordre}.md`. Le nom du destinataire est déduit du mail original (l'expéditeur de la demande d'arbitrage). Le numéro d'ordre est incrémenté pour éviter les doublons (vérifier les fichiers existants dans `to-send/` commençant par le même nom de destinataire).
-5. **Finaliser :** Exécuter les mêmes actions que pour `other` dans `do-read-long` (archiver .eml, classer pièces jointes, nettoyer, mettre à jour la mémoire, mettre à jour le pending_emails.json)
-
-### Action `other` dans `do-consult-and-decide`
-
-**Phase 1 — Analyse et identification** (exécution autonome)
-
-1. **Analyser :** Lire le corps du message et les pièces jointes éventuelles
-2. **Exploiter `agenda-info` (si présent) :** Si l'entrée du mail dans le `pending_emails.json` contient un champ `agenda-info`, intégrer ces informations dans la transmission au collaborateur consulté (disponibilité, conflit éventuel, créneaux alternatifs)
-3. **Identifier le destinataire :** Utiliser le skill `memory-management` pour déterminer à quel collaborateur transmettre le message pour consultation
-
----
+Afficher le résumé du mail (`proposal.mail_summary`) et le consultant identifié (`proposal.consultant`).
 
 > **ARRÊT OBLIGATOIRE — Validation du destinataire**
 > Afficher immédiatement à l'utilisateur le résumé du mail et le destinataire identifié.
 > Poser la question suivante de manière visible :
 >
-> **"Mail {id} ({expéditeur}) — Pour consultation avant arbitrage, j'ai identifié : {nom_destinataire}.**
+> **"Mail {id} ({analysis.sender}) — Pour consultation avant arbitrage, j'ai identifié : {proposal.consultant}.**
 > **Est-ce le bon destinataire ? Répondez OUI pour confirmer, ou indiquez le destinataire correct."**
 >
-> **NE PAS passer à la Phase 2 avant d'avoir reçu une réponse explicite de l'utilisateur.**
+> **NE PAS poursuivre avant d'avoir reçu une réponse explicite de l'utilisateur.**
 > **Cesser toute exécution. Attendre.**
 
----
+Conserver la réponse de l'utilisateur (confirmation ou destinataire corrigé) pour l'étape 3e.
 
-**Phase 2 — Rédaction et enregistrement** (après confirmation du destinataire)
+#### do-other
 
-3. **Rédiger le mail de transmission :** Rédiger un mail de transmission demandant les éléments d'analyse avant d'arbitrer. L'enregistrer au format markdown dans `to-send/{nom_destinataire}_{numéro_ordre}.md` (incrémenter le numéro d'ordre pour éviter les doublons).
-4. **Mettre à jour le registre de consultation :** Ajouter une ligne dans le fichier `consult.md` situé à la racine du répertoire de travail (créer le fichier s'il n'existe pas, avec un en-tête de tableau markdown). La ligne contient :
-   - `id` du message
-   - Date du jour
-   - Nom du destinataire
-   - Résumé du message et de ses pièces jointes
-
-   Format du fichier `consult.md` :
-   ```markdown
-   # Registre des consultations
-
-   | ID | Date | Destinataire | Résumé |
-   |----|------|-------------|--------|
-   | {id} | {date_du_jour} | {nom_destinataire} | {résumé} |
-   ```
-5. **Finaliser :** Exécuter les mêmes actions que pour `other` dans `do-read-long` (archiver .eml, classer pièces jointes, nettoyer, mettre à jour la mémoire, mettre à jour le pending_emails.json)
-
-### Action `other` dans `do-other`
-
-**Phase 1 — Analyse et identification** (exécution autonome)
-
-1. **Analyser :** Lire le corps du message et les pièces jointes éventuelles
-2. **Exploiter `agenda-info` (si présent) :** Si l'entrée du mail dans le `pending_emails.json` contient un champ `agenda-info`, intégrer ces informations dans le mail de transmission (disponibilité, conflit éventuel, créneaux alternatifs proposés)
-3. **Identifier le destinataire :** Utiliser le skill `memory-management` pour déterminer à quel collaborateur transmettre le message pour qu'il le traite.
-
----
+Afficher le résumé du mail (`proposal.mail_summary`) et le destinataire identifié (`proposal.handler`).
 
 > **ARRÊT OBLIGATOIRE — Validation du destinataire**
 > Afficher immédiatement à l'utilisateur le résumé du mail et le destinataire identifié.
 > Poser la question suivante de manière visible :
 >
-> **"Mail {id} ({expéditeur}) — Pour transmission avec suite à donner, j'ai identifié : {nom_destinataire}.**
+> **"Mail {id} ({analysis.sender}) — Pour transmission avec suite à donner, j'ai identifié : {proposal.handler}.**
 > **Est-ce le bon destinataire ? Répondez OUI pour confirmer, ou indiquez le destinataire correct."**
 >
-> **NE PAS passer à la Phase 2 avant d'avoir reçu une réponse explicite de l'utilisateur.**
+> **NE PAS poursuivre avant d'avoir reçu une réponse explicite de l'utilisateur.**
 > **Cesser toute exécution. Attendre.**
 
----
+Conserver la réponse de l'utilisateur (confirmation ou destinataire corrigé) pour l'étape 3e.
 
-**Phase 2 — Rédaction et finalisation** (après confirmation du destinataire)
+#### do-self
 
-3. **Rédiger le mail de transmission :** Rédiger un mail de transmission pour suite à donner. L'enregistrer au format markdown dans `to-send/{nom_destinataire}_{numéro_ordre}.md` (incrémenter le numéro d'ordre pour éviter les doublons).
-4. **Finaliser :** Exécuter les mêmes actions que pour `other` dans `do-read-long` (archiver .eml, classer pièces jointes, nettoyer, mettre à jour la mémoire, mettre à jour le pending_emails.json)
-
-### Action `other` dans `do-self`
-
-**Phase 1 — Analyse et préparation** (exécution autonome)
-
-1. **Analyser :** Lire le corps du message et les pièces jointes éventuelles
-2. **Contextualiser :** Utiliser le skill `memory-management` (lookup flow complet) pour rechercher toutes connaissances utiles sur le dossier, le sujet ou la thématique
-3. **Exploiter `agenda-info` (si présent) :** Si l'entrée du mail dans le `pending_emails.json` contient un champ `agenda-info`, intégrer ces informations dans le plan d'action :
-   - Si `disponibilite` = "disponible" : inclure le créneau comme échéance dans la checklist
-   - Si `disponibilite` = "conflit" : proposer les créneaux alternatifs (`creneaux-alternatifs`) et mentionner le conflit à résoudre
-   - Si des `dates-proposees` existent : les intégrer comme jalons dans le plan d'action
-4. **Préparer la proposition :** Élaborer :
-   - Un plan d'action structuré intégrant des échéances structuré sous forme d'un fichier `checklist.md`
-   
-Format du fichier `checklist.md` :
-   ```markdown
-   # Plan d'action {objet du mail}
-   
-   **Contexte:** {Résumé de la demande}
-   
-   **Contact:**
-   	{expéditeur}
-   	
-   	## A FAIRE
-   	- [ ]  {Tache 1} pour le {échéance 1} 
-   	- [ ]  {Tache 2} pour le {échéance 2} 
-   	- ...
-   ```
-      
-      - La liste des livrables proposés (note, graphique, tableau Excel, présentation PowerPoint) avec une description de ce que chacun contiendrait
-
----
+Afficher le plan d'action (`proposal.checklist`) et la liste des livrables proposés (`proposal.deliverables`).
 
 > **ARRÊT OBLIGATOIRE — Validation du plan et des livrables**
 > Afficher immédiatement à l'utilisateur le plan d'action et la liste des livrables proposés.
 > Poser la question suivante de manière visible :
 >
-> **"Mail {id} ({expéditeur}) — Voici le plan d'action et les livrables proposés.**
+> **"Mail {id} ({analysis.sender}) — Voici le plan d'action et les livrables proposés.**
 > **Validez-vous cette proposition ? Répondez OUI pour lancer la préparation, ou indiquez vos modifications."**
 >
-> **NE PAS passer à la Phase 2 avant d'avoir reçu une réponse explicite de l'utilisateur.**
+> **NE PAS poursuivre avant d'avoir reçu une réponse explicite de l'utilisateur.**
 > **Cesser toute exécution. Attendre.**
 
----
+Conserver la réponse de l'utilisateur (validation ou modifications) pour l'étape 3e.
 
-**Phase 2 — Production et stockage** (après validation de la proposition)
+### Étape 3e — Lancement parallèle Phase 2 (finalisation)
 
-3. **Rédiger un projet de mail de réponse** : indiquer que la demande a bien été prise en compte et qu'une réponse complète sera apportée à {échéance}. A enregistrer dans `to-send/`
-4. **Produire les livrables :** Créer les projets de livrables (note, graphique, tableau Excel, présentation PowerPoint)
-5. **Stocker :** Enregistrer le fichier checklist.md, une copie des documents à signer s'il y en a, une copie des documents à relire s'il y en a et l'ensemble des documents préparés dans un sous-répertoire de `to-work/` nommé de façon descriptive (par exemple : `to-work/arbitrage-budget-2026/`)
-6. **Finaliser :** Exécuter les mêmes actions que pour `other` dans `do-read-long` (archiver .eml, classer pièces jointes, nettoyer, mettre à jour la mémoire, mettre à jour le pending_emails.json)
+**Pré-allocation des numéros `to-send/` :** Avant de lancer les agents, lister les fichiers existants dans `to-send/`. Pour chaque mail validé, déterminer le destinataire final (confirmé ou corrigé par l'utilisateur) et allouer le prochain numéro disponible pour ce destinataire. Passer ce numéro à l'agent via le prompt.
+
+Lancer l'agent `todo-processor` en parallèle pour **tous** les mails validés. Chaque appel `Task` reçoit comme prompt :
+
+```
+Traite le mail situé dans le répertoire <chemin_absolu_du_sous-répertoire>.
+Mode : finalize
+Catégorie : <catégorie>
+Répertoire de travail : <chemin_absolu_du_répertoire_de_travail>
+Chemin du script read-odf : ${CLAUDE_PLUGIN_ROOT}/skills/read-odf/scripts/read_odf.py
+
+Contenu validé :
+<contenu validé par l'utilisateur — projet d'arbitrage modifié, ou "validé sans modification">
+
+Destinataire validé : <nom du destinataire confirmé ou corrigé>
+Numéro to-send pré-alloué : <NN>
+
+Lis le fichier de l'agent : @${CLAUDE_PLUGIN_ROOT}/agents/todo-processor.md
+Suis les instructions de l'agent pour finaliser le traitement et mettre à jour le _treatment.json.
+```
+
+**Lancer tous les appels `Task` dans un même tour** pour maximiser le parallélisme. Attendre la fin de tous les agents.
+
+### Étape 3f — Collecte des résultats de finalisation
+
+Pour chaque mail finalisé :
+1. Lire le `_treatment.json` mis à jour (dans `to-clean-by-user/{id}/`)
+2. Si `status` est `"success"` : retirer l'entrée correspondante (par `id`) du `pending_emails.json` de la catégorie source et réécrire le fichier
+3. Si `status` est `"error"` : consigner l'erreur
+
+**Mise à jour de `consult.md` :** Pour chaque mail de catégorie `do-consult-and-decide` dont le `_treatment.json` contient un champ `finalization.consult_entry` non null, ajouter cette ligne dans le fichier `consult.md` à la racine du répertoire de travail. Créer le fichier s'il n'existe pas, avec l'en-tête :
+```markdown
+# Registre des consultations
+
+| ID | Date | Destinataire | Résumé |
+|----|------|-------------|--------|
+```
+
+### Étape 3g — Production des livrables do-self
+
+Pour chaque mail de catégorie `do-self` dont la finalisation est réussie :
+1. Lire les spécifications des livrables dans `_treatment.json` (`proposal.deliverables`)
+2. Produire les livrables dans le répertoire `to-work/` créé par l'agent (chemin dans `finalization.to_work_dir`) :
+   - **Note** : créer le document via le skill plateforme **docx**
+   - **Tableau Excel** : créer le classeur via le skill plateforme **xlsx**
+   - **Présentation PowerPoint** : créer la présentation via le skill plateforme **pptx**
+   - **Graphique** : créer via `Bash(python3:*)` avec matplotlib
+3. Les spécifications dans `proposal.deliverables` et le contexte dans `analysis.summary` fournissent les éléments de contenu nécessaires sans relire le mail original
+
+### Étape 3h — Consolidation mémoire
+
+Collecter les champs `memory_updates` de **tous** les `_treatment.json` produits (files autonome et interactive confondues).
+
+Pour chaque type de mise à jour :
+
+1. **Nouveaux collaborateurs** (`new_people`) : pour chaque personne non déjà présente dans CLAUDE.md, créer ou mettre à jour `memory/people/{nom}.md` et évaluer si elle doit être ajoutée à CLAUDE.md (contact fréquent)
+2. **Nouveaux sujets/dossiers** (`new_projects`) : pour chaque sujet non déjà présent, créer ou mettre à jour `memory/projects/{nom}.md` et évaluer si le sujet est actif (auquel cas l'ajouter à CLAUDE.md)
+3. **Nouveaux termes** (`new_terms`) : pour chaque terme non déjà présent dans CLAUDE.md, l'ajouter à la section Termes
+4. **Préférences** (`preferences`) : compléter ou amender la section Preferences de CLAUDE.md
+
+Appliquer les conventions du skill `memory-management` : consulter `@${CLAUDE_PLUGIN_ROOT}/skills/memory-management/SKILL.md` pour les formats et conventions.
 
 ## Étape 4 — Nettoyage et compte-rendu
 
@@ -350,8 +350,15 @@ Présenter à l'utilisateur un compte-rendu complet du traitement :
 | Supprimés (`delete`) | ... |
 | Déplacés et traités immédiatement (`do-read-quick`) | ... |
 | Archivés (`do-read-quick` action `other`) | ... |
-| Traités (`other` complexes) | ... |
+| Traités autonomes (`do-read-long` other) | ... |
+| Traités interactifs (`other` complexes) | ... |
 | Reclassés et traités (`other` après déplacement) | ... |
+
+**Statistiques de traitement parallèle :**
+```
+Phase 1 (analyse parallèle) : N agents lancés, N succès, N erreurs
+Phase 2 (finalisation parallèle) : N agents lancés, N succès, N erreurs
+```
 
 Si des fichiers ont été créés dans `to-send/`, les lister :
 ```
@@ -373,8 +380,11 @@ Si des erreurs ont été rencontrées, les lister avec le détail du problème.
 
 ## Notes
 
-- Ce skill fait référence au skill `memory-management` pour le lookup flow et les mises à jour de la mémoire. Consulter `@${CLAUDE_PLUGIN_ROOT}/skills/memory-management/SKILL.md` pour les détails du fonctionnement de la mémoire.
-- Les actions `other` complexes (do-decide, do-consult-and-decide, do-other, do-self) nécessitent des interactions obligatoires avec l'utilisateur. Elles sont traitées séquentiellement, un mail à la fois. Chaque ARRÊT OBLIGATOIRE doit être respecté : afficher le contenu, poser la question, attendre la réponse.
+- Le traitement de chaque mail dans l'Étape 3 est délégué à l'agent `todo-processor` via `Task`, dans un contexte isolé. L'agent applique les mêmes règles anti-hallucination (lecture obligatoire des fichiers sources) et produit un `_treatment.json` servant de contrat structuré. Consulter `@${CLAUDE_PLUGIN_ROOT}/agents/todo-processor.md` pour les détails de l'agent.
+- Ce skill fait référence au skill `memory-management` pour le lookup flow et les mises à jour de la mémoire (consolidation en étape 3h). Consulter `@${CLAUDE_PLUGIN_ROOT}/skills/memory-management/SKILL.md` pour les détails du fonctionnement de la mémoire.
+- Les actions `other` complexes (do-decide, do-consult-and-decide, do-other, do-self) nécessitent des interactions obligatoires avec l'utilisateur. Les ARRÊTS OBLIGATOIRES sont gérés dans le contexte principal de process-todo (étape 3d), pas dans les agents. Chaque ARRÊT OBLIGATOIRE doit être respecté : afficher le contenu, poser la question, attendre la réponse.
 - **Traitement automatique après déplacement inter-catégories :** Lorsque l'utilisateur reclasse un mail via le dashboard (action = nom de catégorie), le mail est déplacé puis automatiquement traité comme une action `other` dans la catégorie de destination. Le fichier `todo/_deferred.json` sert de file d'attente persistante entre l'Étape 2 (déplacement) et l'Étape 3 (traitement). Ce mécanisme évite un aller-retour avec le dashboard. Le fichier est écrasé avec `[]` en Étape 4.
-- Le numéro d'ordre dans les noms de fichiers `to-send/` est déterminé en listant les fichiers existants commençant par le même préfixe de destinataire et en prenant le prochain numéro disponible (format : `{nom_destinataire}_{NN}.md` avec NN sur 2 chiffres).
+- **Pré-allocation des numéros `to-send/` :** Les numéros d'ordre dans les noms de fichiers `to-send/` sont pré-alloués par process-todo avant le lancement des agents de finalisation (étape 3e), pour éviter les conflits de numérotation entre agents parallèles. Le format reste `{nom_destinataire}_{NN}.md` avec NN sur 2 chiffres.
+- **Consolidation `consult.md` :** Les entrées du registre de consultation sont collectées depuis les `_treatment.json` et écrites séquentiellement par process-todo (étape 3f), pour éviter les écritures concurrentes.
+- **Consolidation mémoire :** Les mises à jour mémoire sont collectées depuis tous les `_treatment.json` et appliquées en une seule passe par process-todo (étape 3h), pour éviter les conflits d'écriture sur CLAUDE.md et les fichiers memory/.
 - L'extraction AAAA/MM pour l'archivage se fait depuis l'identifiant du mail (les 10 premiers caractères de l'id, format `AAAA-MM-JJ`).

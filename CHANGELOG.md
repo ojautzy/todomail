@@ -7,6 +7,22 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [0.32.0] - 2026-03-12
+
+### Ajouté
+- **Nouvel agent `todo-processor`** — Agent autonome qui traite un mail unique pour process-todo dans un contexte isolé. Trois modes : « autonomous » (traitement complet do-read-long : archivage, classement PJ, nettoyage), « analyze » (Phase 1 d'analyse et production de propositions pour les catégories interactives), « finalize » (Phase 2 d'archivage et finalisation après validation utilisateur). Produit un fichier `_treatment.json` dans le répertoire du mail.
+
+### Modifié
+- **process-todo** — Refonte de l'Étape 3. Les traitements « other » complexes sont désormais délégués à l'agent `todo-processor` via `Task` dans des contextes isolés. Phase 1 (analyse) parallélisée sur tous les mails. Les ARRÊTS OBLIGATOIRES restent dans le contexte principal. Phase 2 (finalisation) parallélisée après validation utilisateur. Ajout de `Task` dans les `allowed-tools`. Pré-allocation des numéros `to-send/` pour éviter les conflits entre agents parallèles. Consolidation centralisée de `consult.md` et de la mémoire après collecte de tous les résultats. Production des livrables do-self dans le contexte principal via les skills plateforme.
+- **CONNECTORS.md** — Ajout de la colonne `todo-processor` dans le tableau d'utilisation des tools MCP. Mise à jour de la légende pour refléter la délégation process-todo → todo-processor.
+- **README.md** — Ajout de `todo-processor` dans la table Agents.
+- **memory-management** — Mise à jour de la section Intégration pour refléter la délégation à `todo-processor` et la consolidation mémoire centralisée.
+
+### Optimisé
+- **Réduction de la consommation de contexte** — Isolation du traitement de chaque mail dans un agent dédié, éliminant l'accumulation de contexte qui saturait le traitement dès 10-20 mails. Exécution parallèle des analyses (Phase 1) et des finalisations (Phase 2).
+
+---
+
 ## [0.31.0] - 2026-03-03
 
 ### Ajouté
