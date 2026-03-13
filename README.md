@@ -48,7 +48,12 @@ Principe : si Claude doit pouvoir utiliser une capacité de sa propre initiative
 
 ## Dashboard interactif
 
-Le fichier `dashboard.html` (copié à la racine du répertoire de travail par `/start`) est une interface web locale permettant à l'utilisateur de naviguer entre les catégories de mails triés, consulter les synthèses et ajuster les actions. Les fichiers `instructions.json` sont générés et mis à jour automatiquement (valeurs par défaut : SUPPRIMER pour la Corbeille, TRAITER pour les autres catégories). Le dashboard dispose d'un menu de navigation extensible (Catégorisation, Mémoire, Tâches). Il fonctionne sans serveur backend via l'API File System Access (navigateurs Chromium). Voir `README.dashboard.md` pour la documentation technique complète.
+Le fichier `dashboard.html` (copié à la racine du répertoire de travail par `/start`) est une interface web locale avec deux vues principales :
+
+- **Catégorisation** : navigation entre les catégories de mails triés, consultation des synthèses et ajustement des actions. Les fichiers `instructions.json` sont générés et mis à jour automatiquement (valeurs par défaut : SUPPRIMER pour la Corbeille, TRAITER pour les autres catégories).
+- **Tâches** : gestionnaire de tâches en 3 sections — suivi des consultations en cours (`consult.md`), mails à envoyer (`to-send/`), et travail à faire (`to-work/`). Chaque section offre aperçu, édition, copie presse-papier et suppression avec confirmation inline.
+
+Le dashboard dispose d'un menu de navigation extensible (Catégorisation, Mémoire, Tâches). Il fonctionne sans serveur backend via l'API File System Access (navigateurs Chromium). Voir `README.dashboard.md` pour la documentation technique complète.
 
 ## Catégories de tri
 
@@ -127,7 +132,7 @@ répertoire de travail/
 │   └── do-self/                ← production personnelle
 ├── mails/                      ← archive des mails traités (AAAA/MM/) (indexée par le connecteur MCP/RAG)
 ├── to-clean-by-user/           ← fichiers à supprimer manuellement
-├── to-send/                    ← projets de mails à envoyer
+├── to-send/                    ← projets de mails à envoyer (frontmatter YAML : to, cc, subject, date, ref_mail_id)
 ├── to-work/                    ← dossiers à travailler
 ├── to-brief/                   ← dossiers de préparation des réunions
 ├── docs/                       ← base documentaire (indexée par le connecteur MCP/RAG)

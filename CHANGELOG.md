@@ -7,6 +7,18 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [1.2.0] - 2026-03-13
+
+### Ajouté
+- **Dashboard — Vue Tâches** — Nouvelle vue complète « Tâches » dans le dashboard avec 3 sections : Suivi consultations (lecture/édition de `consult.md`), Mails à envoyer (gestion des fichiers `to-send/` avec aperçu, copie presse-papier, édition), Travail à faire (gestion des dossiers `to-work/` avec checklist et documents). Suppression inline avec confirmation, modales d'édition, filtres et tris.
+- **Format structuré des fichiers `to-send/`** — Les fichiers `.md` générés dans `to-send/` utilisent désormais un frontmatter YAML obligatoire (`to`, `cc`, `subject`, `date`, `ref_mail_id`) pour structurer les mails comme des messages prêts à envoyer.
+
+### Modifié
+- **process-todo** — Étape 3f : la mise à jour de `consult.md` inclut désormais les mails `do-other` en plus de `do-consult-and-decide`.
+- **todo-processor** — Mode `finalize` : ajout de `finalization.consult_entry` pour la catégorie `do-other`. Spécification du format frontmatter YAML obligatoire pour tous les fichiers `to-send/`.
+
+---
+
 ## [1.0.0] - 2026-03-13
 
 Première release stabilisée de TodoMail.

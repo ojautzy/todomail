@@ -182,9 +182,9 @@ Valeurs possibles pour la balise `action` :
 ### Menu de navigation principal
 
 Le dashboard dispose d'un menu de navigation dans l'en-tête avec des onglets pour les différentes fonctionnalités :
-* **Catégorisation** : fonctionnalité active (gestion des mails triés)
+* **Catégorisation** : gestion des mails triés (vue par défaut)
 * **Mémoire** : placeholder pour la future visualisation/édition de la mémoire
-* **Tâches** : placeholder pour le futur gestionnaire de tâches
+* **Tâches** : gestionnaire de tâches en 3 sections (consultations, mails à envoyer, travail à faire)
 
 ### Navigation multi-catégories
 
@@ -229,7 +229,68 @@ Le dashboard dispose d'un menu de navigation dans l'en-tête avec des onglets po
 * **Modal de Détail :** Affichage riche avec police monospace pour le corps du mail et détection automatique des assets locaux.
 * **Actions contextuelles :** Le dropdown d'actions propose dynamiquement les catégories de destination (toutes sauf la catégorie active et trash). L'action par défaut est SUPPRIMER pour la Corbeille et TRAITER pour les autres catégories.
 
-## **6\. Principes de Sécurité**
+## **6\. Vue Tâches**
+
+La vue Tâches est accessible via le menu de navigation principal. Elle dispose de sa propre sidebar avec 3 sections, chacune connectée à une source de données distincte.
+
+### Sidebar Tâches
+
+| Section | Icône | Source | Description |
+|---------|-------|--------|-------------|
+| Suivi consultations | `eye` | `consult.md` | Registre des consultations en cours à suivre |
+| Mails à envoyer | `send` | `to-send/*.md` | Projets de mails prêts à envoyer |
+| Travail à faire | `clipboard-list` | `to-work/*/` | Dossiers de travail avec checklists et documents |
+
+Chaque section affiche un badge compteur dans la sidebar.
+
+### Section « Suivi consultations »
+
+Lit et parse le fichier `consult.md` à la racine du répertoire de travail (table markdown avec colonnes : ID, Date, Destinataire, Résumé).
+
+* **Carte par entrée** : affiche ID, date, destinataire et résumé
+* **Filtre texte** : recherche sur tous les champs
+* **Suppression** : checkbox avec confirmation inline (icônes check/x) — retire la ligne de `consult.md` et réécrit le fichier
+* **Toast** de confirmation après suppression
+
+### Section « Mails à envoyer »
+
+Liste les fichiers `.md` dans le répertoire `to-send/`. Chaque fichier utilise un frontmatter YAML structuré :
+
+```markdown
+---
+to: prenom.nom@email.com
+cc: autre.personne@email.com
+subject: Objet du mail
+date: 2026-03-13
+ref_mail_id: id_du_mail_source
+---
+
+Corps du mail en markdown...
+```
+
+* **Carte par fichier** : nom du destinataire (déduit du nom de fichier), objet du mail (extrait du frontmatter `subject`)
+* **Flyover** (carte dépliable) : affiche `to`, `cc`, `subject`, aperçu du corps, boutons copier destinataire(s) et copier corps dans le presse-papier (feedback visuel temporaire)
+* **Édition** : bouton ouvrant une modale textarea avec le contenu markdown complet, sauvegarde dans le fichier
+* **Suppression** : checkbox avec confirmation inline — supprime le fichier `.md`
+* **Filtre/tri** par destinataire
+
+### Section « Travail à faire »
+
+Liste les sous-répertoires de `to-work/`. Chaque répertoire représente une tâche.
+
+* **Carte par répertoire** : nom du répertoire = nom de la tâche
+* **Flyover** (carte dépliable) : contenu de `checklist.md` avec rendu des checkboxes markdown, liste des documents présents (tout fichier sauf `checklist.md`) avec ouverture via Blob URL
+* **Édition** : bouton ouvrant une modale textarea pour éditer `checklist.md`
+* **Suppression** : checkbox avec confirmation inline — supprime récursivement le répertoire (`removeEntry` avec `{ recursive: true }`)
+
+### Patterns UX communs (vue Tâches)
+
+* **Confirmation inline** : pas de `window.confirm()`, les suppressions utilisent un pattern check/x avec timeout d'annulation
+* **Copie presse-papier** : `navigator.clipboard.writeText()` avec changement d'icône temporaire (clipboard-copy → check-circle)
+* **Modale d'édition** : backdrop-blur, textarea monospace, boutons Annuler/Sauvegarder
+* **Design** : même design system que la vue Catégorisation (Tailwind, dark mode, glassmorphism, animations slide-up, toasts)
+
+## **7\. Principes de Sécurité**
 
 * **Sandboxing :** L'application n'accède qu'au dossier explicitement sélectionné par l'utilisateur.
 * **Zéro Cloud :** Aucune donnée ne quitte la machine de l'utilisateur. Les fichiers sont lus et écrits localement par le navigateur.
