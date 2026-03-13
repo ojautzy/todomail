@@ -8,8 +8,8 @@ L'application est une interface **"Human-in-the-loop"** (l'humain dans la boucle
 
 * **Claude Cowork** prépare le travail en triant les mails et en générant des synthèses JSON adaptées à chaque catégorie.
 * **Le Dashboard** présente ces informations de manière ergonomique avec une navigation par catégorie.
-* **L'Utilisateur** navigue entre les catégories, consulte les synthèses contextuelles et valide ou modifie les actions proposées.
-* **Claude Cowork** exécute les décisions finales via le skill `process-todo` basé sur les fichiers `instructions.json` de chaque catégorie.
+* **L'Utilisateur** navigue entre les catégories, consulte les synthèses contextuelles et ajuste les actions si nécessaire.
+* **Claude Cowork** exécute les décisions via le skill `process-todo` basé sur les fichiers `instructions.json` générés automatiquement par le dashboard.
 
 ## **2\. Prérequis**
 
@@ -60,7 +60,7 @@ L'application s'attend à trouver l'arborescence suivante relative au fichier da
 
 Chaque sous-répertoire de `todo/` contient son propre `pending_emails.json` (entrée) et `instructions.json` (sortie).
 
-**Note :** Un fichier `pending_emails.json` contenant un tableau vide `[]` est fonctionnellement équivalent à l'absence du fichier : le dashboard affiche un compteur à 0, le message "Aucun mail dans cette catégorie", et masque le bouton de validation. Cette propriété est exploitée par les skills pour purger les données sans suppression de fichier.
+**Note :** Un fichier `pending_emails.json` contenant un tableau vide `[]` est fonctionnellement équivalent à l'absence du fichier : le dashboard affiche un compteur à 0 et le message "Aucun mail dans cette catégorie". Cette propriété est exploitée par les skills pour purger les données sans suppression de fichier.
 
 ## **4\. Formats des Fichiers JSON**
 
@@ -143,10 +143,20 @@ Situé dans chaque sous-répertoire d'ID, il contient le contenu complet du mail
 
 ### **C. instructions.json (Sortie du Dashboard)**
 
-Fichier généré par le dashboard lorsque l'utilisateur clique sur "Valider" dans une catégorie donnée. Un fichier `instructions.json` est écrit dans le sous-répertoire de la catégorie active. Ces fichiers sont ensuite consommés par le skill `process-todo` (commande `/todomail:process-todo`) qui exécute les actions correspondantes.
+Fichier généré et mis à jour automatiquement par le dashboard. Un fichier `instructions.json` est écrit dans le sous-répertoire de chaque catégorie contenant des mails. Ces fichiers sont ensuite consommés par le skill `process-todo` (commande `/todomail:process-todo`) qui exécute les actions correspondantes.
+
+**Comportement automatique (v1.0.0+) :**
+- Au chargement d'une catégorie, le dashboard lit un `instructions.json` existant ou en génère un avec les valeurs par défaut
+- Chaque changement de sélection dans un dropdown met à jour immédiatement le fichier
+- Les actions en masse (bulk action) mettent également à jour le fichier immédiatement
+- Un indicateur visuel (toast) confirme chaque sauvegarde
+
+**Valeurs par défaut :**
+- Catégorie `trash` : `delete` (SUPPRIMER)
+- Autres catégories : `other` (TRAITER)
 
 ```json
-[{ "id": "2026-02-18_13h24m00_1", "action": "keep" }]
+[{ "id": "2026-02-18_13h24m00_1", "action": "other" }]
 ```
 
 Valeurs possibles pour la balise `action` :
@@ -169,6 +179,13 @@ Valeurs possibles pour la balise `action` :
 
 ## **5\. Fonctionnalités Clés**
 
+### Menu de navigation principal
+
+Le dashboard dispose d'un menu de navigation dans l'en-tête avec des onglets pour les différentes fonctionnalités :
+* **Catégorisation** : fonctionnalité active (gestion des mails triés)
+* **Mémoire** : placeholder pour la future visualisation/édition de la mémoire
+* **Tâches** : placeholder pour le futur gestionnaire de tâches
+
 ### Navigation multi-catégories
 
 * **Sidebar verticale :** Panneau de navigation fixe sur la gauche, affichant les 7 catégories avec icônes et labels complets, toujours visibles.
@@ -176,7 +193,14 @@ Valeurs possibles pour la balise `action` :
 * **Autorisation unique :** L'utilisateur n'a besoin d'autoriser l'accès au répertoire qu'une seule fois au démarrage.
 * **Affichage contextuel :** Les champs affichés dans les cartes d'email s'adaptent automatiquement à la catégorie sélectionnée.
 * **Badge compteur :** Chaque catégorie affiche le nombre de mails qu'elle contient dans la sidebar (style accentué pour la catégorie active, style discret pour les autres). Les compteurs sont chargés au démarrage pour toutes les catégories et mis à jour dynamiquement lors de la navigation.
-* **Carte dépliable :** Chaque carte mail dispose d'un bouton de déploiement (chevron) qui affiche l'intégralité du texte des champs générés sans ouvrir le mail complet.
+* **Carte dépliable :** Chaque carte mail dispose d'un bouton de déploiement (chevron) qui affiche l'intégralité du texte des champs générés sans ouvrir le mail complet. Un scrollbar apparaît automatiquement si le contenu dépasse la zone dépliable.
+
+### Sauvegarde automatique des instructions
+
+* **Auto-sync :** Les fichiers `instructions.json` sont générés et mis à jour automatiquement, sans bouton de validation.
+* **Valeurs par défaut intelligentes :** SUPPRIMER pour la catégorie Corbeille, TRAITER pour toutes les autres catégories.
+* **Persistance :** Les décisions précédemment enregistrées dans un `instructions.json` existant sont rechargées automatiquement au retour dans une catégorie.
+* **Feedback visuel :** Un toast de confirmation apparaît à chaque sauvegarde (vert pour succès, rouge pour erreur).
 
 | Catégorie | Label | Champ affiché |
 |-----------|-------|---------------|
@@ -203,7 +227,7 @@ Valeurs possibles pour la balise `action` :
 * **Design Pro :** Utilisation de Tailwind CSS (Shadows, Glassmorphism, Transitions).
 * **Mode Sombre :** Bascule dynamique via un état React persistant sur la session.
 * **Modal de Détail :** Affichage riche avec police monospace pour le corps du mail et détection automatique des assets locaux.
-* **Actions contextuelles :** Le dropdown d'actions propose dynamiquement les catégories de destination (toutes sauf la catégorie active et trash). Pour les catégories non-trash, une action "TRAITER" est proposée en tête de liste.
+* **Actions contextuelles :** Le dropdown d'actions propose dynamiquement les catégories de destination (toutes sauf la catégorie active et trash). L'action par défaut est SUPPRIMER pour la Corbeille et TRAITER pour les autres catégories.
 
 ## **6\. Principes de Sécurité**
 

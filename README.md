@@ -48,7 +48,7 @@ Principe : si Claude doit pouvoir utiliser une capacité de sa propre initiative
 
 ## Dashboard interactif
 
-Le fichier `dashboard.html` (copié à la racine du répertoire de travail par `/start`) est une interface web locale permettant à l'utilisateur de naviguer entre les catégories de mails triés, consulter les synthèses, et valider ses décisions. Il fonctionne sans serveur backend via l'API File System Access (navigateurs Chromium). Voir `README.dashboard.md` pour la documentation technique complète.
+Le fichier `dashboard.html` (copié à la racine du répertoire de travail par `/start`) est une interface web locale permettant à l'utilisateur de naviguer entre les catégories de mails triés, consulter les synthèses et ajuster les actions. Les fichiers `instructions.json` sont générés et mis à jour automatiquement (valeurs par défaut : SUPPRIMER pour la Corbeille, TRAITER pour les autres catégories). Le dashboard dispose d'un menu de navigation extensible (Catégorisation, Mémoire, Tâches). Il fonctionne sans serveur backend via l'API File System Access (navigateurs Chromium). Voir `README.dashboard.md` pour la documentation technique complète.
 
 ## Catégories de tri
 
@@ -88,7 +88,8 @@ todomail/
 │   ├── briefing.md
 │   └── check-agenda.md
 ├── agents/
-│   └── mail-analyzer.md
+│   ├── mail-analyzer.md
+│   └── todo-processor.md
 ├── skills/
 │   ├── sort-mails/
 │   │   └── SKILL.md

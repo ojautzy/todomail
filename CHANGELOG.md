@@ -7,6 +7,22 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [1.0.0] - 2026-03-13
+
+Première release stabilisée de TodoMail.
+
+### Ajouté
+- **Dashboard v2 — Sauvegarde automatique** — Les fichiers `instructions.json` sont désormais générés et mis à jour automatiquement à chaque action utilisateur. Suppression du bouton « VALIDER LES ORDRES ». Toast de confirmation visuel à chaque sauvegarde.
+- **Dashboard v2 — Valeurs par défaut intelligentes** — Action par défaut SUPPRIMER pour la catégorie Corbeille, TRAITER pour toutes les autres catégories. Les décisions existantes dans un `instructions.json` sont rechargées automatiquement au retour dans une catégorie.
+- **Dashboard v2 — Menu de navigation** — Menu horizontal dans l'en-tête avec onglets Catégorisation (actif), Mémoire (placeholder) et Tâches (placeholder), préparant l'ajout de futures fonctionnalités.
+- **Dashboard v2 — Scrollbar cartes dépliables** — Scrollbar discret dans les zones dépliables pour les synthèses longues.
+
+### Modifié
+- **README.md** — Mise à jour de la description du dashboard (auto-sync, défauts, menu nav). Ajout de `todo-processor.md` dans l'arborescence agents.
+- **README.dashboard.md** — Documentation des nouvelles fonctionnalités : sauvegarde automatique, valeurs par défaut, menu de navigation principal, scrollbar. Mise à jour de la section instructions.json.
+
+---
+
 ## [0.32.1] - 2026-03-12
 
 ### Modifié
