@@ -24,6 +24,11 @@
         .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
         .card-expand { max-height: 0; overflow: hidden; transition: max-height 0.35s ease-out, opacity 0.25s ease-out; opacity: 0; }
         .card-expand.open { max-height: 600px; opacity: 1; transition: max-height 0.45s ease-in, opacity 0.3s ease-in; }
+        .card-expand.open .card-expand-inner { max-height: 500px; overflow-y: auto; }
+        .card-expand-inner::-webkit-scrollbar { width: 6px; }
+        .card-expand-inner::-webkit-scrollbar-track { background: transparent; }
+        .card-expand-inner::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.3); border-radius: 3px; }
+        .card-expand-inner::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.5); }
     </style>
 </head>
 <body class="bg-slate-50 dark:bg-darkBg text-slate-900 dark:text-slate-100 transition-colors duration-500 font-sans">
@@ -56,8 +61,11 @@
             const [activeSubdir, setActiveSubdir] = useState("trash");
             const [expandedCard, setExpandedCard] = useState(null);
             const [counts, setCounts] = useState({});
+            const [saveStatus, setSaveStatus] = useState(null);
+            const [activeView, setActiveView] = useState("categorization");
 
             const activeConfig = SUBDIRS.find(s => s.key === activeSubdir);
+            const defaultAction = activeSubdir === 'trash' ? 'delete' : 'other';
 
             useEffect(() => {
                 if (isDark) document.documentElement.classList.add('dark');
@@ -67,7 +75,7 @@
             useEffect(() => {
                 const timer = setTimeout(() => lucide.createIcons(), 50);
                 return () => clearTimeout(timer);
-            }, [activeSubdir, rootHandle, emails, selectedMail, isDark, expandedCard]);
+            }, [activeSubdir, rootHandle, emails, selectedMail, isDark, expandedCard, saveStatus, activeView]);
 
             const loadAllCounts = async (handle) => {
                 const newCounts = {};
@@ -94,6 +102,25 @@
                 } catch (err) { console.error(err); }
             };
 
+            const writeInstructions = async (handle, subdirKey, emailsList, decisionsMap) => {
+                try {
+                    const defAction = subdirKey === 'trash' ? 'delete' : 'other';
+                    const todoDir = await handle.getDirectoryHandle('todo');
+                    const categoryDir = await todoDir.getDirectoryHandle(subdirKey);
+                    const result = emailsList.map(e => ({ id: e.id, action: decisionsMap[e.id] || defAction }));
+                    const fh = await categoryDir.getFileHandle('instructions.json', { create: true });
+                    const writable = await fh.createWritable();
+                    await writable.write(JSON.stringify(result, null, 2));
+                    await writable.close();
+                    setSaveStatus('saved');
+                    setTimeout(() => setSaveStatus(null), 2000);
+                } catch (err) {
+                    console.error('Erreur écriture instructions.json:', err);
+                    setSaveStatus('error');
+                    setTimeout(() => setSaveStatus(null), 3000);
+                }
+            };
+
             const loadSubdirEmails = async (handle, subdirKey) => {
                 try {
                     const todoDir = await handle.getDirectoryHandle('todo');
@@ -101,10 +128,31 @@
                     const fileHandle = await categoryDir.getFileHandle('pending_emails.json');
                     const data = JSON.parse(await (await fileHandle.getFile()).text());
                     setEmails(data);
-                    setDecisions({});
                     setSearchTerm("");
                     setExpandedCard(null);
                     setCounts(prev => ({ ...prev, [subdirKey]: data.length }));
+
+                    // Charger instructions.json existant ou générer les défauts
+                    const defAction = subdirKey === 'trash' ? 'delete' : 'other';
+                    let loadedDecisions = {};
+                    try {
+                        const instrFile = await categoryDir.getFileHandle('instructions.json');
+                        const instrData = JSON.parse(await (await instrFile.getFile()).text());
+                        if (Array.isArray(instrData) && instrData.length > 0) {
+                            instrData.forEach(instr => { loadedDecisions[instr.id] = instr.action; });
+                        }
+                    } catch (_) {
+                        // Pas de fichier existant — on utilise les défauts
+                    }
+                    // S'assurer que chaque mail a une décision
+                    data.forEach(e => {
+                        if (!loadedDecisions[e.id]) loadedDecisions[e.id] = defAction;
+                    });
+                    setDecisions(loadedDecisions);
+                    // Écrire le fichier instructions.json avec les valeurs chargées/défaut
+                    if (data.length > 0) {
+                        writeInstructions(handle, subdirKey, data, loadedDecisions);
+                    }
                 } catch (err) {
                     setEmails([]);
                     setDecisions({});
@@ -169,31 +217,27 @@
                 } catch (err) { console.error(err); }
             };
 
+            const updateDecision = (mailId, action) => {
+                const newDecisions = { ...decisions, [mailId]: action };
+                setDecisions(newDecisions);
+                if (rootHandle) writeInstructions(rootHandle, activeSubdir, emails, newDecisions);
+            };
+
             const bulkAction = (sender, action) => {
                 const newDecisions = { ...decisions };
                 emails.forEach(mail => {
                     if (mail.sender === sender) newDecisions[mail.id] = action;
                 });
                 setDecisions(newDecisions);
-            };
-
-            const saveInstructions = async () => {
-                const todoDir = await rootHandle.getDirectoryHandle('todo');
-                const categoryDir = await todoDir.getDirectoryHandle(activeSubdir);
-                const result = emails.map(e => ({ id: e.id, action: decisions[e.id] || "keep" }));
-                const fileHandle = await categoryDir.getFileHandle('instructions.json', { create: true });
-                const writable = await fileHandle.createWritable();
-                await writable.write(JSON.stringify(result, null, 2));
-                await writable.close();
-                alert("Instructions enregistrées pour " + activeConfig.label + " !");
+                if (rootHandle) writeInstructions(rootHandle, activeSubdir, emails, newDecisions);
             };
 
             const getSelectStyle = (mailId) => {
-                const val = decisions[mailId];
+                const val = decisions[mailId] || defaultAction;
                 if (val === 'delete') return 'text-red-500 bg-red-50 dark:bg-red-900/20';
                 if (val === 'other') return 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20';
-                if (val && val !== 'keep') return 'text-amber-600 bg-amber-50 dark:bg-amber-900/20';
-                return 'text-blue-500 bg-blue-50 dark:bg-blue-900/20';
+                if (val === 'keep') return 'text-blue-500 bg-blue-50 dark:bg-blue-900/20';
+                return 'text-amber-600 bg-amber-50 dark:bg-amber-900/20';
             };
 
             const toggleExpand = (mailId, e) => {
@@ -205,13 +249,40 @@
                 <div className="min-h-screen flex flex-col">
                     {/* TOP NAV */}
                     <nav className="sticky top-0 z-40 glass-nav px-6 py-4 flex justify-between items-center">
-                        <div className="flex items-center gap-3">
-                            <div className="bg-blue-600 p-2 rounded-lg text-white">
-                                <Icon name="bot" />
+                        <div className="flex items-center gap-6">
+                            <div className="flex items-center gap-3">
+                                <div className="bg-blue-600 p-2 rounded-lg text-white">
+                                    <Icon name="bot" />
+                                </div>
+                                <h1 className="font-bold text-xl tracking-tight">
+                                    Todomail <span className="text-blue-500 font-light">Dashboard</span>
+                                </h1>
                             </div>
-                            <h1 className="font-bold text-xl tracking-tight">
-                                Todomail <span className="text-blue-500 font-light">Dashboard</span>
-                            </h1>
+
+                            {/* Menu de navigation */}
+                            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-xl p-1">
+                                {[
+                                    { key: "categorization", label: "Catégorisation", icon: "inbox", enabled: true },
+                                    { key: "memory", label: "Mémoire", icon: "brain", enabled: false },
+                                    { key: "tasks", label: "Tâches", icon: "list-checks", enabled: false },
+                                ].map(view => (
+                                    <button
+                                        key={view.key}
+                                        onClick={() => view.enabled && setActiveView(view.key)}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+                                            activeView === view.key
+                                                ? 'bg-white dark:bg-darkCard text-blue-600 shadow-sm'
+                                                : view.enabled
+                                                    ? 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                                                    : 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                                        }`}
+                                        title={!view.enabled ? "Bientôt disponible" : ""}
+                                    >
+                                        <Icon name={view.icon} size={16} />
+                                        {view.label}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
 
                         <div className="flex gap-4">
@@ -261,7 +332,7 @@
                         )}
 
                         {/* ZONE PRINCIPALE */}
-                        <main className="flex-1 pb-32 px-6 pt-6">
+                        <main className="flex-1 pb-12 px-6 pt-6">
                             <div className="max-w-4xl mx-auto">
 
                                 {/* BARRE DE RECHERCHE */}
@@ -347,8 +418,8 @@
                                                         <Icon name={isExpanded ? "chevron-up" : "chevron-down"} size={18} />
                                                     </button>
                                                     <select
-                                                        value={decisions[mail.id] || "keep"}
-                                                        onChange={(e) => setDecisions({...decisions, [mail.id]: e.target.value})}
+                                                        value={decisions[mail.id] || defaultAction}
+                                                        onChange={(e) => updateDecision(mail.id, e.target.value)}
                                                         className={`text-xs font-bold p-2 rounded-lg border-none outline-none cursor-pointer transition-colors ${getSelectStyle(mail.id)}`}
                                                     >
                                                         <option value="keep">GARDER</option>
@@ -373,7 +444,7 @@
                                             {/* ZONE DÉPLIABLE (FLY-OVER) */}
                                             <div className={`card-expand ${isExpanded ? 'open' : ''}`}>
                                                 <div className="px-5 pb-5 pt-1 border-t border-slate-100 dark:border-slate-800">
-                                                    <div className="mt-3 space-y-3">
+                                                    <div className="mt-3 space-y-3 card-expand-inner">
                                                         {/* Champ principal */}
                                                         <div>
                                                             <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">{activeConfig.displayLabel}</div>
@@ -446,12 +517,15 @@
                         </main>
                     </div>
 
-                    {/* BARRE DE VALIDATION */}
-                    {emails.length > 0 && (
-                        <div className="fixed bottom-0 left-0 right-0 p-6 glass-nav flex justify-center border-t border-slate-200 dark:border-slate-800 shadow-[0_-10px_20px_rgba(0,0,0,0.05)] z-30">
-                            <button onClick={saveInstructions} className="bg-blue-600 text-white px-12 py-4 rounded-2xl font-black shadow-2xl hover:bg-blue-700 hover:scale-105 active:scale-95 transition-all">
-                                {"VALIDER LES ORDRES \u2014 " + activeConfig.label.toUpperCase()}
-                            </button>
+                    {/* INDICATEUR DE SAUVEGARDE */}
+                    {saveStatus && (
+                        <div className={`fixed bottom-6 right-6 z-30 px-4 py-2.5 rounded-xl text-sm font-bold shadow-lg transition-all animate-slide-up flex items-center gap-2 ${
+                            saveStatus === 'saved'
+                                ? 'bg-emerald-500 text-white'
+                                : 'bg-red-500 text-white'
+                        }`}>
+                            <Icon name={saveStatus === 'saved' ? 'check-circle' : 'alert-circle'} size={16} />
+                            {saveStatus === 'saved' ? 'Instructions sauvegardées' : 'Erreur de sauvegarde'}
                         </div>
                     )}
 
