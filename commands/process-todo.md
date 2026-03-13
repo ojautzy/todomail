@@ -296,7 +296,7 @@ Pour chaque mail finalisé :
 2. Si `status` est `"success"` : retirer l'entrée correspondante (par `id`) du `pending_emails.json` de la catégorie source et réécrire le fichier
 3. Si `status` est `"error"` : consigner l'erreur
 
-**Mise à jour de `consult.md` :** Pour chaque mail de catégorie `do-consult-and-decide` dont le `_treatment.json` contient un champ `finalization.consult_entry` non null, ajouter cette ligne dans le fichier `consult.md` à la racine du répertoire de travail. Créer le fichier s'il n'existe pas, avec l'en-tête :
+**Mise à jour de `consult.md` :** Pour chaque mail de catégorie `do-consult-and-decide` **ou `do-other`** dont le `_treatment.json` contient un champ `finalization.consult_entry` non null, ajouter cette ligne dans le fichier `consult.md` à la racine du répertoire de travail. Créer le fichier s'il n'existe pas, avec l'en-tête :
 ```markdown
 # Registre des consultations
 

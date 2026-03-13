@@ -35,10 +35,10 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useCallback } = React;
 
         const SUBDIRS = [
-            { key: "trash", label: "Corbeille", icon: "trash-2", displayField: "summary", displayLabel: "Résumé" },
+            { key: "trash", label: "Corbeille", icon: "trash-2", displayField: "summary", displayLabel: "Resumé" },
             { key: "do-read-quick", label: "A lire (rapide)", icon: "book-open", displayField: "synth", displayLabel: "Synthèse" },
             { key: "do-read-long", label: "A lire (long)", icon: "file-text", displayField: "detailed-synth", displayLabel: "Synthèse détaillée" },
             { key: "do-decide", label: "Arbitrages rapides", icon: "scale", displayField: "choose-points", displayLabel: "Points d'arbitrage" },
@@ -47,9 +47,67 @@
             { key: "do-self", label: "A faire", icon: "user-check", displayField: "synth", displayLabel: "Synthèse" },
         ];
 
+        const TASK_SECTIONS = [
+            { key: "consult", label: "Suivi consultations", icon: "eye" },
+            { key: "to-send", label: "Mails à envoyer", icon: "send" },
+            { key: "to-work", label: "Travail à faire", icon: "clipboard-list" },
+        ];
+
         const Icon = ({ name, size = 20, className = "" }) => {
             return <i data-lucide={name} className={className} style={{ width: size, height: size }}></i>;
         };
+
+        // Parse YAML frontmatter from markdown content
+        function parseFrontmatter(content) {
+            const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+            if (!match) return { meta: {}, body: content };
+            const meta = {};
+            match[1].split('\n').forEach(line => {
+                const idx = line.indexOf(':');
+                if (idx > 0) {
+                    const key = line.slice(0, idx).trim();
+                    const val = line.slice(idx + 1).trim();
+                    meta[key] = val;
+                }
+            });
+            return { meta, body: match[2] };
+        }
+
+        // Parse consult.md markdown table into array of objects
+        function parseConsultMd(content) {
+            const lines = content.split('\n').filter(l => l.trim().startsWith('|'));
+            if (lines.length < 2) return [];
+            // Skip header and separator rows
+            return lines.slice(2).map(line => {
+                const cells = line.split('|').map(c => c.trim()).filter(c => c);
+                if (cells.length >= 4) {
+                    return { id: cells[0], date: cells[1], destinataire: cells[2], resume: cells[3] };
+                }
+                return null;
+            }).filter(Boolean);
+        }
+
+        // Rebuild consult.md content from entries
+        function buildConsultMd(entries) {
+            let md = "# Registre des consultations\n\n| ID | Date | Destinataire | Résumé |\n|----|------|-------------|--------|\n";
+            entries.forEach(e => {
+                md += `| ${e.id} | ${e.date} | ${e.destinataire} | ${e.resume} |\n`;
+            });
+            return md;
+        }
+
+        // Extract recipient display name from filename like "jean-martin_01.md"
+        function recipientFromFilename(filename) {
+            const base = filename.replace(/\.md$/, '');
+            const parts = base.split('_');
+            parts.pop(); // remove number
+            return parts.join('_').split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        }
+
+        // Recursive directory removal via File System Access API
+        async function removeDirectoryRecursive(parentHandle, dirName) {
+            await parentHandle.removeEntry(dirName, { recursive: true });
+        }
 
         function App() {
             const [isDark, setIsDark] = useState(false);
@@ -64,6 +122,18 @@
             const [saveStatus, setSaveStatus] = useState(null);
             const [activeView, setActiveView] = useState("categorization");
 
+            // Tasks view state
+            const [activeTaskSection, setActiveTaskSection] = useState("consult");
+            const [taskSearchTerm, setTaskSearchTerm] = useState("");
+            const [consultEntries, setConsultEntries] = useState([]);
+            const [toSendFiles, setToSendFiles] = useState([]);
+            const [toWorkTasks, setToWorkTasks] = useState([]);
+            const [expandedTaskCard, setExpandedTaskCard] = useState(null);
+            const [editModal, setEditModal] = useState(null); // { type, key, content }
+            const [confirmDelete, setConfirmDelete] = useState(null); // { type, key, label }
+            const [copiedField, setCopiedField] = useState(null); // "to:filename" or "body:filename"
+            const [taskCounts, setTaskCounts] = useState({ consult: 0, "to-send": 0, "to-work": 0 });
+
             const activeConfig = SUBDIRS.find(s => s.key === activeSubdir);
             const defaultAction = activeSubdir === 'trash' ? 'delete' : 'other';
 
@@ -75,7 +145,14 @@
             useEffect(() => {
                 const timer = setTimeout(() => lucide.createIcons(), 50);
                 return () => clearTimeout(timer);
-            }, [activeSubdir, rootHandle, emails, selectedMail, isDark, expandedCard, saveStatus, activeView]);
+            }, [activeSubdir, rootHandle, emails, selectedMail, isDark, expandedCard, saveStatus, activeView, activeTaskSection, consultEntries, toSendFiles, toWorkTasks, expandedTaskCard, editModal, confirmDelete, copiedField]);
+
+            const showToast = (type) => {
+                setSaveStatus(type);
+                setTimeout(() => setSaveStatus(null), 2000);
+            };
+
+            // ========== CATEGORIZATION VIEW LOGIC (unchanged) ==========
 
             const loadAllCounts = async (handle) => {
                 const newCounts = {};
@@ -99,6 +176,7 @@
                     setRootHandle(handle);
                     loadSubdirEmails(handle, activeSubdir);
                     loadAllCounts(handle);
+                    loadTaskCounts(handle);
                 } catch (err) { console.error(err); }
             };
 
@@ -112,12 +190,10 @@
                     const writable = await fh.createWritable();
                     await writable.write(JSON.stringify(result, null, 2));
                     await writable.close();
-                    setSaveStatus('saved');
-                    setTimeout(() => setSaveStatus(null), 2000);
+                    showToast('saved');
                 } catch (err) {
                     console.error('Erreur écriture instructions.json:', err);
-                    setSaveStatus('error');
-                    setTimeout(() => setSaveStatus(null), 3000);
+                    showToast('error');
                 }
             };
 
@@ -132,7 +208,6 @@
                     setExpandedCard(null);
                     setCounts(prev => ({ ...prev, [subdirKey]: data.length }));
 
-                    // Charger instructions.json existant ou générer les défauts
                     const defAction = subdirKey === 'trash' ? 'delete' : 'other';
                     let loadedDecisions = {};
                     try {
@@ -141,15 +216,11 @@
                         if (Array.isArray(instrData) && instrData.length > 0) {
                             instrData.forEach(instr => { loadedDecisions[instr.id] = instr.action; });
                         }
-                    } catch (_) {
-                        // Pas de fichier existant — on utilise les défauts
-                    }
-                    // S'assurer que chaque mail a une décision
+                    } catch (_) {}
                     data.forEach(e => {
                         if (!loadedDecisions[e.id]) loadedDecisions[e.id] = defAction;
                     });
                     setDecisions(loadedDecisions);
-                    // Écrire le fichier instructions.json avec les valeurs chargées/défaut
                     if (data.length > 0) {
                         writeInstructions(handle, subdirKey, data, loadedDecisions);
                     }
@@ -159,7 +230,6 @@
                     setSearchTerm("");
                     setExpandedCard(null);
                     setCounts(prev => ({ ...prev, [subdirKey]: 0 }));
-                    console.warn(`Aucun pending_emails.json trouvé dans todo/${subdirKey}/`);
                 }
             };
 
@@ -167,9 +237,7 @@
                 setActiveSubdir(subdirKey);
                 setSelectedMail(null);
                 setExpandedCard(null);
-                if (rootHandle) {
-                    loadSubdirEmails(rootHandle, subdirKey);
-                }
+                if (rootHandle) loadSubdirEmails(rootHandle, subdirKey);
             };
 
             const filteredEmails = useMemo(() => {
@@ -206,7 +274,6 @@
                     const mailDir = await categoryDir.getDirectoryHandle(id);
                     const jsonFile = await mailDir.getFileHandle('message.json');
                     const detailData = JSON.parse(await (await jsonFile.getFile()).text());
-
                     const attachments = [];
                     for await (const entry of mailDir.values()) {
                         if (entry.kind === 'file' && !entry.name.endsWith('.json') && !entry.name.endsWith('.eml')) {
@@ -245,6 +312,292 @@
                 setExpandedCard(expandedCard === mailId ? null : mailId);
             };
 
+            // ========== TASKS VIEW LOGIC ==========
+
+            const loadTaskCounts = async (handle) => {
+                const tc = { consult: 0, "to-send": 0, "to-work": 0 };
+                try {
+                    const fh = await handle.getFileHandle('consult.md');
+                    const content = await (await fh.getFile()).text();
+                    tc.consult = parseConsultMd(content).length;
+                } catch (_) {}
+                try {
+                    const dir = await handle.getDirectoryHandle('to-send');
+                    for await (const entry of dir.values()) {
+                        if (entry.kind === 'file' && entry.name.endsWith('.md')) tc["to-send"]++;
+                    }
+                } catch (_) {}
+                try {
+                    const dir = await handle.getDirectoryHandle('to-work');
+                    for await (const entry of dir.values()) {
+                        if (entry.kind === 'directory') tc["to-work"]++;
+                    }
+                } catch (_) {}
+                setTaskCounts(tc);
+            };
+
+            const loadConsultEntries = async (handle) => {
+                try {
+                    const fh = await handle.getFileHandle('consult.md');
+                    const content = await (await fh.getFile()).text();
+                    const entries = parseConsultMd(content);
+                    setConsultEntries(entries);
+                    setTaskCounts(prev => ({ ...prev, consult: entries.length }));
+                } catch (_) {
+                    setConsultEntries([]);
+                    setTaskCounts(prev => ({ ...prev, consult: 0 }));
+                }
+            };
+
+            const loadToSendFiles = async (handle) => {
+                try {
+                    const dir = await handle.getDirectoryHandle('to-send');
+                    const files = [];
+                    for await (const entry of dir.values()) {
+                        if (entry.kind === 'file' && entry.name.endsWith('.md')) {
+                            const file = await entry.getFile();
+                            const content = await file.text();
+                            const { meta, body } = parseFrontmatter(content);
+                            files.push({
+                                filename: entry.name,
+                                recipient: recipientFromFilename(entry.name),
+                                to: meta.to || '',
+                                cc: meta.cc || '',
+                                subject: meta.subject || '',
+                                date: meta.date || '',
+                                refMailId: meta.ref_mail_id || '',
+                                body: body.trim(),
+                                rawContent: content
+                            });
+                        }
+                    }
+                    files.sort((a, b) => a.filename.localeCompare(b.filename));
+                    setToSendFiles(files);
+                    setTaskCounts(prev => ({ ...prev, "to-send": files.length }));
+                } catch (_) {
+                    setToSendFiles([]);
+                    setTaskCounts(prev => ({ ...prev, "to-send": 0 }));
+                }
+            };
+
+            const loadToWorkTasks = async (handle) => {
+                try {
+                    const dir = await handle.getDirectoryHandle('to-work');
+                    const tasks = [];
+                    for await (const entry of dir.values()) {
+                        if (entry.kind === 'directory') {
+                            let checklistContent = '';
+                            const documents = [];
+                            const taskDir = await dir.getDirectoryHandle(entry.name);
+                            for await (const fileEntry of taskDir.values()) {
+                                if (fileEntry.kind === 'file') {
+                                    if (fileEntry.name === 'checklist.md') {
+                                        const f = await fileEntry.getFile();
+                                        checklistContent = await f.text();
+                                    } else {
+                                        documents.push(fileEntry.name);
+                                    }
+                                }
+                            }
+                            tasks.push({
+                                dirName: entry.name,
+                                label: entry.name.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+                                checklist: checklistContent,
+                                documents: documents.sort()
+                            });
+                        }
+                    }
+                    tasks.sort((a, b) => a.dirName.localeCompare(b.dirName));
+                    setToWorkTasks(tasks);
+                    setTaskCounts(prev => ({ ...prev, "to-work": tasks.length }));
+                } catch (_) {
+                    setToWorkTasks([]);
+                    setTaskCounts(prev => ({ ...prev, "to-work": 0 }));
+                }
+            };
+
+            const switchTaskSection = (sectionKey) => {
+                setActiveTaskSection(sectionKey);
+                setTaskSearchTerm("");
+                setExpandedTaskCard(null);
+                if (rootHandle) {
+                    if (sectionKey === 'consult') loadConsultEntries(rootHandle);
+                    else if (sectionKey === 'to-send') loadToSendFiles(rootHandle);
+                    else if (sectionKey === 'to-work') loadToWorkTasks(rootHandle);
+                }
+            };
+
+            // Load task data when switching to tasks view
+            useEffect(() => {
+                if (activeView === 'tasks' && rootHandle) {
+                    switchTaskSection(activeTaskSection);
+                }
+            }, [activeView]);
+
+            const removeConsultEntry = async (entryId) => {
+                const remaining = consultEntries.filter(e => e.id !== entryId);
+                try {
+                    const fh = await rootHandle.getFileHandle('consult.md', { create: true });
+                    const writable = await fh.createWritable();
+                    await writable.write(buildConsultMd(remaining));
+                    await writable.close();
+                    setConsultEntries(remaining);
+                    setTaskCounts(prev => ({ ...prev, consult: remaining.length }));
+                    showToast('saved');
+                } catch (err) {
+                    console.error(err);
+                    showToast('error');
+                }
+                setConfirmDelete(null);
+            };
+
+            const removeToSendFile = async (filename) => {
+                try {
+                    const dir = await rootHandle.getDirectoryHandle('to-send');
+                    await dir.removeEntry(filename);
+                    const remaining = toSendFiles.filter(f => f.filename !== filename);
+                    setToSendFiles(remaining);
+                    setTaskCounts(prev => ({ ...prev, "to-send": remaining.length }));
+                    showToast('saved');
+                } catch (err) {
+                    console.error(err);
+                    showToast('error');
+                }
+                setConfirmDelete(null);
+            };
+
+            const removeToWorkTask = async (dirName) => {
+                try {
+                    const dir = await rootHandle.getDirectoryHandle('to-work');
+                    await removeDirectoryRecursive(dir, dirName);
+                    const remaining = toWorkTasks.filter(t => t.dirName !== dirName);
+                    setToWorkTasks(remaining);
+                    setTaskCounts(prev => ({ ...prev, "to-work": remaining.length }));
+                    showToast('saved');
+                } catch (err) {
+                    console.error(err);
+                    showToast('error');
+                }
+                setConfirmDelete(null);
+            };
+
+            const saveEditModal = async () => {
+                if (!editModal) return;
+                try {
+                    if (editModal.type === 'to-send') {
+                        const dir = await rootHandle.getDirectoryHandle('to-send');
+                        const fh = await dir.getFileHandle(editModal.key, { create: true });
+                        const writable = await fh.createWritable();
+                        await writable.write(editModal.content);
+                        await writable.close();
+                        await loadToSendFiles(rootHandle);
+                    } else if (editModal.type === 'to-work') {
+                        const dir = await rootHandle.getDirectoryHandle('to-work');
+                        const taskDir = await dir.getDirectoryHandle(editModal.key);
+                        const fh = await taskDir.getFileHandle('checklist.md', { create: true });
+                        const writable = await fh.createWritable();
+                        await writable.write(editModal.content);
+                        await writable.close();
+                        await loadToWorkTasks(rootHandle);
+                    }
+                    showToast('saved');
+                } catch (err) {
+                    console.error(err);
+                    showToast('error');
+                }
+                setEditModal(null);
+            };
+
+            const copyToClipboard = async (text, fieldId) => {
+                try {
+                    await navigator.clipboard.writeText(text);
+                    setCopiedField(fieldId);
+                    setTimeout(() => setCopiedField(null), 1500);
+                } catch (err) { console.error(err); }
+            };
+
+            const openToWorkFile = async (dirName, fileName) => {
+                try {
+                    const dir = await rootHandle.getDirectoryHandle('to-work');
+                    const taskDir = await dir.getDirectoryHandle(dirName);
+                    const fileHandle = await taskDir.getFileHandle(fileName);
+                    const file = await fileHandle.getFile();
+                    const url = URL.createObjectURL(file);
+                    window.open(url, '_blank');
+                } catch (err) { alert("Impossible d'ouvrir le fichier."); }
+            };
+
+            // Filtered task data
+            const filteredConsult = useMemo(() => {
+                const term = taskSearchTerm.toLowerCase();
+                if (!term) return consultEntries;
+                return consultEntries.filter(e =>
+                    e.id.toLowerCase().includes(term) ||
+                    e.date.toLowerCase().includes(term) ||
+                    e.destinataire.toLowerCase().includes(term) ||
+                    e.resume.toLowerCase().includes(term)
+                );
+            }, [consultEntries, taskSearchTerm]);
+
+            const filteredToSend = useMemo(() => {
+                const term = taskSearchTerm.toLowerCase();
+                if (!term) return toSendFiles;
+                return toSendFiles.filter(f =>
+                    f.recipient.toLowerCase().includes(term) ||
+                    f.to.toLowerCase().includes(term) ||
+                    f.subject.toLowerCase().includes(term) ||
+                    f.body.toLowerCase().includes(term)
+                );
+            }, [toSendFiles, taskSearchTerm]);
+
+            const filteredToWork = useMemo(() => {
+                const term = taskSearchTerm.toLowerCase();
+                if (!term) return toWorkTasks;
+                return toWorkTasks.filter(t =>
+                    t.label.toLowerCase().includes(term) ||
+                    t.checklist.toLowerCase().includes(term)
+                );
+            }, [toWorkTasks, taskSearchTerm]);
+
+            // Render simple markdown checklist
+            const renderChecklist = (md) => {
+                return md.split('\n').map((line, i) => {
+                    const checked = line.match(/^\s*-\s*\[x\]/i);
+                    const unchecked = line.match(/^\s*-\s*\[\s?\]/);
+                    if (checked || unchecked) {
+                        const text = line.replace(/^\s*-\s*\[.?\]\s*/, '');
+                        return (
+                            <div key={i} className="flex items-start gap-2 py-0.5">
+                                <span className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center text-[10px] ${checked ? 'bg-emerald-100 border-emerald-400 text-emerald-600 dark:bg-emerald-900/30 dark:border-emerald-700' : 'border-slate-300 dark:border-slate-600'}`}>
+                                    {checked && '\u2713'}
+                                </span>
+                                <span className={`text-sm ${checked ? 'line-through text-slate-400' : 'text-slate-700 dark:text-slate-300'}`}>{text}</span>
+                            </div>
+                        );
+                    }
+                    if (line.startsWith('# ')) return <h3 key={i} className="font-black text-base mt-2 mb-1">{line.slice(2)}</h3>;
+                    if (line.startsWith('## ')) return <h4 key={i} className="font-bold text-sm mt-2 mb-1 text-slate-600 dark:text-slate-400">{line.slice(3)}</h4>;
+                    if (line.startsWith('**') && line.endsWith('**')) return <p key={i} className="font-bold text-sm mt-1">{line.slice(2, -2)}</p>;
+                    if (line.match(/^\*\*.*?\*\*/)) {
+                        const parts = line.split(/(\*\*.*?\*\*)/);
+                        return <p key={i} className="text-sm text-slate-600 dark:text-slate-300">{parts.map((p, j) => p.startsWith('**') ? <strong key={j}>{p.slice(2,-2)}</strong> : p)}</p>;
+                    }
+                    if (line.trim()) return <p key={i} className="text-sm text-slate-600 dark:text-slate-300">{line}</p>;
+                    return null;
+                });
+            };
+
+            // Detect file type for icons
+            const getFileIcon = (name) => {
+                const ext = name.split('.').pop().toLowerCase();
+                if (['pdf'].includes(ext)) return 'file-text';
+                if (['docx', 'doc', 'odt'].includes(ext)) return 'file-type';
+                if (['xlsx', 'xls', 'ods', 'csv'].includes(ext)) return 'table';
+                if (['pptx', 'ppt', 'odp'].includes(ext)) return 'presentation';
+                if (['png', 'jpg', 'jpeg', 'gif', 'svg'].includes(ext)) return 'image';
+                return 'file';
+            };
+
             return (
                 <div className="min-h-screen flex flex-col">
                     {/* TOP NAV */}
@@ -264,7 +617,7 @@
                                 {[
                                     { key: "categorization", label: "Catégorisation", icon: "inbox", enabled: true },
                                     { key: "memory", label: "Mémoire", icon: "brain", enabled: false },
-                                    { key: "tasks", label: "Tâches", icon: "list-checks", enabled: false },
+                                    { key: "tasks", label: "Tâches", icon: "list-checks", enabled: true },
                                 ].map(view => (
                                     <button
                                         key={view.key}
@@ -298,8 +651,8 @@
                     {/* LAYOUT SIDEBAR + MAIN */}
                     <div className="flex flex-1">
 
-                        {/* SIDEBAR NAVIGATION VERTICALE */}
-                        {rootHandle && (
+                        {/* SIDEBAR — CATEGORIZATION */}
+                        {rootHandle && activeView === "categorization" && (
                             <aside className="w-64 min-w-[16rem] bg-white dark:bg-darkSidebar border-r border-slate-200 dark:border-slate-800 p-4 flex flex-col gap-1.5 animate-slide-up sticky top-[73px] h-[calc(100vh-73px)] overflow-y-auto scrollbar-hide">
                                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 px-3">Catégories</div>
                                 {SUBDIRS.map(subdir => {
@@ -331,12 +684,222 @@
                             </aside>
                         )}
 
+                        {/* SIDEBAR — TASKS */}
+                        {rootHandle && activeView === "tasks" && (
+                            <aside className="w-64 min-w-[16rem] bg-white dark:bg-darkSidebar border-r border-slate-200 dark:border-slate-800 p-4 flex flex-col gap-1.5 animate-slide-up sticky top-[73px] h-[calc(100vh-73px)] overflow-y-auto scrollbar-hide">
+                                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 px-3">Sections</div>
+                                {TASK_SECTIONS.map(section => {
+                                    const isActive = activeTaskSection === section.key;
+                                    return (
+                                        <button
+                                            key={section.key}
+                                            onClick={() => switchTaskSection(section.key)}
+                                            className={`flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold transition-all w-full text-left ${
+                                                isActive
+                                                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
+                                                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-500'
+                                            }`}
+                                        >
+                                            <Icon name={section.icon} size={18} />
+                                            <span className="flex-1">{section.label}</span>
+                                            {(taskCounts[section.key] || 0) > 0 && (
+                                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                                    isActive
+                                                        ? 'bg-white/20'
+                                                        : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                                                }`}>
+                                                    {taskCounts[section.key]}
+                                                </span>
+                                            )}
+                                        </button>
+                                    );
+                                })}
+                            </aside>
+                        )}
+
                         {/* ZONE PRINCIPALE */}
                         <main className="flex-1 pb-12 px-6 pt-6">
                             <div className="max-w-4xl mx-auto">
 
-                                {/* BARRE DE RECHERCHE */}
-                                {rootHandle && (
+                                {/* ============ CATEGORIZATION VIEW ============ */}
+                                {activeView === "categorization" && (<>
+                                    {/* BARRE DE RECHERCHE */}
+                                    {rootHandle && (
+                                        <div className="mb-8 animate-slide-up">
+                                            <div className="relative group">
+                                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-500 transition-colors">
+                                                    <Icon name="search" size={18} />
+                                                </div>
+                                                <input
+                                                    type="text"
+                                                    placeholder={`Filtrer dans ${activeConfig.label}...`}
+                                                    value={searchTerm}
+                                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                                    className="w-full bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-2xl py-4 pl-12 pr-4 shadow-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
+                                                />
+                                                {searchTerm && (
+                                                    <div className="absolute inset-y-0 right-4 flex items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                                        {filteredEmails.length} résultat(s)
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div className="space-y-3">
+                                        {filteredEmails.map((mail) => {
+                                            const isExpanded = expandedCard === mail.id;
+                                            return (
+                                            <div key={mail.id} className="animate-slide-up bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-2xl group hover:shadow-xl transition-all">
+                                                <div className="flex items-center">
+                                                    <div className="flex-1 p-5 cursor-pointer" onClick={() => openMailDetails(mail.id)}>
+                                                        <div className="flex items-center gap-3 mb-1">
+                                                            <span className="font-bold text-slate-800 dark:text-slate-100">{mail.sender}</span>
+                                                            <span className="text-[10px] text-slate-400 font-mono">{mail.date}</span>
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); bulkAction(mail.sender, 'delete'); }}
+                                                                className="hidden group-hover:flex items-center gap-1 text-[10px] bg-red-100 dark:bg-red-900/30 text-red-600 px-2 py-0.5 rounded-full font-bold transition-all"
+                                                            >
+                                                                <Icon name="zap" size={10} /> Tout supprimer
+                                                            </button>
+                                                        </div>
+                                                        <p className="text-sm text-slate-500 line-clamp-2">{mail[activeConfig.displayField] || "\u2014"}</p>
+                                                        {activeConfig.extraField && mail[activeConfig.extraField] && (
+                                                            <p className="text-xs text-blue-500 mt-1 flex items-center gap-1">
+                                                                <Icon name="at-sign" size={12} />
+                                                                {activeConfig.extraLabel} : {mail[activeConfig.extraField]}
+                                                            </p>
+                                                        )}
+                                                        {mail["agenda-info"] && (
+                                                            <div className="mt-1.5 inline-flex items-center gap-1.5">
+                                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
+                                                                    mail["agenda-info"].disponibilite === "conflit"
+                                                                        ? "bg-red-100 dark:bg-red-900/30 text-red-600"
+                                                                        : mail["agenda-info"].disponibilite === "possiblement libre"
+                                                                            ? "bg-amber-100 dark:bg-amber-900/30 text-amber-600"
+                                                                            : "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600"
+                                                                }`}>
+                                                                    <Icon name="calendar" size={10} />
+                                                                    {mail["agenda-info"].type === "demande-rdv" ? "Demande RDV" :
+                                                                     mail["agenda-info"].type === "invitation" ? "Invitation" :
+                                                                     mail["agenda-info"].type === "changement" ? "Changement" :
+                                                                     mail["agenda-info"].type === "annulation" ? "Annulation" :
+                                                                     mail["agenda-info"].type === "proposition-creneau" ? "Proposition" :
+                                                                     mail["agenda-info"].type === "rappel" ? "Rappel" : mail["agenda-info"].type}
+                                                                    {" \u2014 "}
+                                                                    {mail["agenda-info"].disponibilite === "conflit" ? "\u26A0 Conflit" :
+                                                                     mail["agenda-info"].disponibilite === "possiblement libre" ? "Possiblement libre" :
+                                                                     "\u2713 Disponible"}
+                                                                </span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    <div className="p-5 flex items-center gap-3">
+                                                        <button
+                                                            onClick={(e) => toggleExpand(mail.id, e)}
+                                                            className={`p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-blue-500 transition-all ${isExpanded ? 'text-blue-500 bg-blue-50 dark:bg-blue-900/20' : ''}`}
+                                                            title="Voir le détail des champs"
+                                                        >
+                                                            <Icon name={isExpanded ? "chevron-up" : "chevron-down"} size={18} />
+                                                        </button>
+                                                        <select
+                                                            value={decisions[mail.id] || defaultAction}
+                                                            onChange={(e) => updateDecision(mail.id, e.target.value)}
+                                                            className={`text-xs font-bold p-2 rounded-lg border-none outline-none cursor-pointer transition-colors ${getSelectStyle(mail.id)}`}
+                                                        >
+                                                            <option value="keep">GARDER</option>
+                                                            {activeSubdir !== 'trash' && (
+                                                                <option value="other">TRAITER</option>
+                                                            )}
+                                                            {activeSubdir === 'trash' ? (
+                                                                <option value="delete">SUPPRIMER</option>
+                                                            ) : (
+                                                                <option value="delete">METTRE A LA CORBEILLE</option>
+                                                            )}
+                                                            {SUBDIRS.filter(s => s.key !== activeSubdir && s.key !== 'trash').map(s => (
+                                                                <option key={s.key} value={s.key}>{"-> " + s.label}</option>
+                                                            ))}
+                                                        </select>
+                                                        <button onClick={() => openMailDetails(mail.id)} className="text-slate-300 hover:text-blue-500 p-2" title="Voir le mail complet">
+                                                            <Icon name="chevron-right" />
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {/* ZONE DÉPLIABLE */}
+                                                <div className={`card-expand ${isExpanded ? 'open' : ''}`}>
+                                                    <div className="px-5 pb-5 pt-1 border-t border-slate-100 dark:border-slate-800">
+                                                        <div className="mt-3 space-y-3 card-expand-inner">
+                                                            <div>
+                                                                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">{activeConfig.displayLabel}</div>
+                                                                <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
+                                                                    {mail[activeConfig.displayField] || "\u2014"}
+                                                                </p>
+                                                            </div>
+                                                            {activeConfig.extraField && mail[activeConfig.extraField] && (
+                                                                <div>
+                                                                    <div className="text-[10px] font-black uppercase tracking-widest text-blue-500 mb-1">{activeConfig.extraLabel}</div>
+                                                                    <p className="text-sm text-blue-600 dark:text-blue-400 leading-relaxed">
+                                                                        {mail[activeConfig.extraField]}
+                                                                    </p>
+                                                                </div>
+                                                            )}
+                                                            {mail["agenda-info"] && (
+                                                                <div className={`p-3 rounded-xl border ${
+                                                                    mail["agenda-info"].disponibilite === "conflit"
+                                                                        ? "bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800"
+                                                                        : mail["agenda-info"].disponibilite === "possiblement libre"
+                                                                            ? "bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800"
+                                                                            : "bg-emerald-50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800"
+                                                                }`}>
+                                                                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 flex items-center gap-1">
+                                                                        <Icon name="calendar" size={12} /> Informations agenda
+                                                                    </div>
+                                                                    <div className="space-y-1 text-xs">
+                                                                        {mail["agenda-info"]["dates-proposees"] && mail["agenda-info"]["dates-proposees"].length > 0 && (
+                                                                            <p><span className="font-bold text-slate-500">Créneau(x) proposé(s) :</span> {mail["agenda-info"]["dates-proposees"].join(", ")}</p>
+                                                                        )}
+                                                                        <p><span className="font-bold text-slate-500">Disponibilité :</span> <span className={
+                                                                            mail["agenda-info"].disponibilite === "conflit" ? "text-red-600 font-bold" :
+                                                                            mail["agenda-info"].disponibilite === "possiblement libre" ? "text-amber-600 font-bold" :
+                                                                            "text-emerald-600 font-bold"
+                                                                        }>{mail["agenda-info"].disponibilite}</span></p>
+                                                                        {mail["agenda-info"]["conflit-detail"] && (
+                                                                            <p><span className="font-bold text-red-500">Conflit :</span> {mail["agenda-info"]["conflit-detail"]}</p>
+                                                                        )}
+                                                                        {mail["agenda-info"]["creneaux-alternatifs"] && mail["agenda-info"]["creneaux-alternatifs"].length > 0 && (
+                                                                            <p><span className="font-bold text-blue-500">Alternatives :</span> {mail["agenda-info"]["creneaux-alternatifs"].join(" | ")}</p>
+                                                                        )}
+                                                                        {mail["agenda-info"].coherence && mail["agenda-info"].coherence !== "cohérent" && (
+                                                                            <p><span className="font-bold text-amber-500">Cohérence :</span> {mail["agenda-info"].coherence}</p>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            );
+                                        })}
+
+                                        {rootHandle && filteredEmails.length === 0 && (
+                                            <div className="py-20 text-center animate-slide-up">
+                                                <div className="inline-flex p-4 bg-slate-100 dark:bg-slate-800 rounded-full text-slate-400 mb-4">
+                                                    <Icon name="search-x" size={32} />
+                                                </div>
+                                                <p className="text-slate-500 font-medium">
+                                                    {searchTerm ? "Aucun mail ne correspond à votre recherche." : "Aucun mail dans cette catégorie."}
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </>)}
+
+                                {/* ============ TASKS VIEW ============ */}
+                                {activeView === "tasks" && rootHandle && (<>
+                                    {/* BARRE DE RECHERCHE TASKS */}
                                     <div className="mb-8 animate-slide-up">
                                         <div className="relative group">
                                             <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-500 transition-colors">
@@ -344,175 +907,305 @@
                                             </div>
                                             <input
                                                 type="text"
-                                                placeholder={`Filtrer dans ${activeConfig.label}...`}
-                                                value={searchTerm}
-                                                onChange={(e) => setSearchTerm(e.target.value)}
+                                                placeholder={`Filtrer dans ${TASK_SECTIONS.find(s => s.key === activeTaskSection)?.label || ''}...`}
+                                                value={taskSearchTerm}
+                                                onChange={(e) => setTaskSearchTerm(e.target.value)}
                                                 className="w-full bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-2xl py-4 pl-12 pr-4 shadow-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
                                             />
-                                            {searchTerm && (
+                                            {taskSearchTerm && (
                                                 <div className="absolute inset-y-0 right-4 flex items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                                                    {filteredEmails.length} résultat(s)
+                                                    {activeTaskSection === 'consult' ? filteredConsult.length :
+                                                     activeTaskSection === 'to-send' ? filteredToSend.length :
+                                                     filteredToWork.length} résultat(s)
                                                 </div>
                                             )}
                                         </div>
                                     </div>
-                                )}
 
-                                <div className="space-y-3">
-                                    {filteredEmails.map((mail) => {
-                                        const isExpanded = expandedCard === mail.id;
-                                        return (
-                                        <div key={mail.id} className="animate-slide-up bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-2xl group hover:shadow-xl transition-all">
-                                            {/* LIGNE PRINCIPALE DE LA CARTE */}
-                                            <div className="flex items-center">
-                                                <div className="flex-1 p-5 cursor-pointer" onClick={() => openMailDetails(mail.id)}>
-                                                    <div className="flex items-center gap-3 mb-1">
-                                                        <span className="font-bold text-slate-800 dark:text-slate-100">{mail.sender}</span>
-                                                        <span className="text-[10px] text-slate-400 font-mono">{mail.date}</span>
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); bulkAction(mail.sender, 'delete'); }}
-                                                            className="hidden group-hover:flex items-center gap-1 text-[10px] bg-red-100 dark:bg-red-900/30 text-red-600 px-2 py-0.5 rounded-full font-bold transition-all"
-                                                        >
-                                                            <Icon name="zap" size={10} /> Tout supprimer
-                                                        </button>
-                                                    </div>
-                                                    <p className="text-sm text-slate-500 line-clamp-2">{mail[activeConfig.displayField] || "\u2014"}</p>
-                                                    {activeConfig.extraField && mail[activeConfig.extraField] && (
-                                                        <p className="text-xs text-blue-500 mt-1 flex items-center gap-1">
-                                                            <Icon name="at-sign" size={12} />
-                                                            {activeConfig.extraLabel} : {mail[activeConfig.extraField]}
-                                                        </p>
-                                                    )}
-                                                    {mail["agenda-info"] && (
-                                                        <div className="mt-1.5 inline-flex items-center gap-1.5">
-                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
-                                                                mail["agenda-info"].disponibilite === "conflit"
-                                                                    ? "bg-red-100 dark:bg-red-900/30 text-red-600"
-                                                                    : mail["agenda-info"].disponibilite === "possiblement libre"
-                                                                        ? "bg-amber-100 dark:bg-amber-900/30 text-amber-600"
-                                                                        : "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600"
-                                                            }`}>
-                                                                <Icon name="calendar" size={10} />
-                                                                {mail["agenda-info"].type === "demande-rdv" ? "Demande RDV" :
-                                                                 mail["agenda-info"].type === "invitation" ? "Invitation" :
-                                                                 mail["agenda-info"].type === "changement" ? "Changement" :
-                                                                 mail["agenda-info"].type === "annulation" ? "Annulation" :
-                                                                 mail["agenda-info"].type === "proposition-creneau" ? "Proposition" :
-                                                                 mail["agenda-info"].type === "rappel" ? "Rappel" : mail["agenda-info"].type}
-                                                                {" \u2014 "}
-                                                                {mail["agenda-info"].disponibilite === "conflit" ? "\u26A0 Conflit" :
-                                                                 mail["agenda-info"].disponibilite === "possiblement libre" ? "Possiblement libre" :
-                                                                 "\u2713 Disponible"}
-                                                            </span>
-                                                        </div>
-                                                    )}
-                                                </div>
-
-                                                <div className="p-5 flex items-center gap-3">
-                                                    {/* Bouton déplier */}
-                                                    <button
-                                                        onClick={(e) => toggleExpand(mail.id, e)}
-                                                        className={`p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-blue-500 transition-all ${isExpanded ? 'text-blue-500 bg-blue-50 dark:bg-blue-900/20' : ''}`}
-                                                        title="Voir le détail des champs"
-                                                    >
-                                                        <Icon name={isExpanded ? "chevron-up" : "chevron-down"} size={18} />
-                                                    </button>
-                                                    <select
-                                                        value={decisions[mail.id] || defaultAction}
-                                                        onChange={(e) => updateDecision(mail.id, e.target.value)}
-                                                        className={`text-xs font-bold p-2 rounded-lg border-none outline-none cursor-pointer transition-colors ${getSelectStyle(mail.id)}`}
-                                                    >
-                                                        <option value="keep">GARDER</option>
-                                                        {activeSubdir !== 'trash' && (
-                                                            <option value="other">TRAITER</option>
-                                                        )}
-                                                        {activeSubdir === 'trash' ? (
-                                                            <option value="delete">SUPPRIMER</option>
-                                                        ) : (
-                                                            <option value="delete">METTRE A LA CORBEILLE</option>
-                                                        )}
-                                                        {SUBDIRS.filter(s => s.key !== activeSubdir && s.key !== 'trash').map(s => (
-                                                            <option key={s.key} value={s.key}>{"-> " + s.label}</option>
-                                                        ))}
-                                                    </select>
-                                                    <button onClick={() => openMailDetails(mail.id)} className="text-slate-300 hover:text-blue-500 p-2" title="Voir le mail complet">
-                                                        <Icon name="chevron-right" />
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            {/* ZONE DÉPLIABLE (FLY-OVER) */}
-                                            <div className={`card-expand ${isExpanded ? 'open' : ''}`}>
-                                                <div className="px-5 pb-5 pt-1 border-t border-slate-100 dark:border-slate-800">
-                                                    <div className="mt-3 space-y-3 card-expand-inner">
-                                                        {/* Champ principal */}
-                                                        <div>
-                                                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">{activeConfig.displayLabel}</div>
-                                                            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
-                                                                {mail[activeConfig.displayField] || "\u2014"}
-                                                            </p>
-                                                        </div>
-                                                        {/* Champ extra (ex: transmit pour do-consult-and-decide) */}
-                                                        {activeConfig.extraField && mail[activeConfig.extraField] && (
-                                                            <div>
-                                                                <div className="text-[10px] font-black uppercase tracking-widest text-blue-500 mb-1">{activeConfig.extraLabel}</div>
-                                                                <p className="text-sm text-blue-600 dark:text-blue-400 leading-relaxed">
-                                                                    {mail[activeConfig.extraField]}
-                                                                </p>
+                                    {/* ---- CONSULT SECTION ---- */}
+                                    {activeTaskSection === "consult" && (
+                                        <div className="space-y-3">
+                                            {filteredConsult.map(entry => (
+                                                <div key={entry.id} className="animate-slide-up bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-2xl group hover:shadow-xl transition-all">
+                                                    <div className="flex items-center">
+                                                        <div className="flex-1 p-5">
+                                                            <div className="flex items-center gap-3 mb-1">
+                                                                <span className="font-bold text-slate-800 dark:text-slate-100">{entry.destinataire}</span>
+                                                                <span className="text-[10px] text-slate-400 font-mono">{entry.date}</span>
                                                             </div>
-                                                        )}
-                                                        {/* Champ agenda-info */}
-                                                        {mail["agenda-info"] && (
-                                                            <div className={`p-3 rounded-xl border ${
-                                                                mail["agenda-info"].disponibilite === "conflit"
-                                                                    ? "bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800"
-                                                                    : mail["agenda-info"].disponibilite === "possiblement libre"
-                                                                        ? "bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800"
-                                                                        : "bg-emerald-50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800"
-                                                            }`}>
-                                                                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 flex items-center gap-1">
-                                                                    <Icon name="calendar" size={12} /> Informations agenda
+                                                            <p className="text-sm text-slate-500">{entry.resume}</p>
+                                                            <p className="text-[10px] text-slate-400 font-mono mt-1">ID: {entry.id}</p>
+                                                        </div>
+                                                        <div className="p-5">
+                                                            {confirmDelete?.type === 'consult' && confirmDelete?.key === entry.id ? (
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="text-xs text-red-500 font-bold">Confirmer ?</span>
+                                                                    <button onClick={() => removeConsultEntry(entry.id)} className="p-1.5 bg-red-100 dark:bg-red-900/30 text-red-600 rounded-lg hover:bg-red-200 transition-all">
+                                                                        <Icon name="check" size={14} />
+                                                                    </button>
+                                                                    <button onClick={() => setConfirmDelete(null)} className="p-1.5 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-lg hover:bg-slate-200 transition-all">
+                                                                        <Icon name="x" size={14} />
+                                                                    </button>
                                                                 </div>
-                                                                <div className="space-y-1 text-xs">
-                                                                    {mail["agenda-info"]["dates-proposees"] && mail["agenda-info"]["dates-proposees"].length > 0 && (
-                                                                        <p><span className="font-bold text-slate-500">Créneau(x) proposé(s) :</span> {mail["agenda-info"]["dates-proposees"].join(", ")}</p>
-                                                                    )}
-                                                                    <p><span className="font-bold text-slate-500">Disponibilité :</span> <span className={
-                                                                        mail["agenda-info"].disponibilite === "conflit" ? "text-red-600 font-bold" :
-                                                                        mail["agenda-info"].disponibilite === "possiblement libre" ? "text-amber-600 font-bold" :
-                                                                        "text-emerald-600 font-bold"
-                                                                    }>{mail["agenda-info"].disponibilite}</span></p>
-                                                                    {mail["agenda-info"]["conflit-detail"] && (
-                                                                        <p><span className="font-bold text-red-500">Conflit :</span> {mail["agenda-info"]["conflit-detail"]}</p>
-                                                                    )}
-                                                                    {mail["agenda-info"]["creneaux-alternatifs"] && mail["agenda-info"]["creneaux-alternatifs"].length > 0 && (
-                                                                        <p><span className="font-bold text-blue-500">Alternatives :</span> {mail["agenda-info"]["creneaux-alternatifs"].join(" | ")}</p>
-                                                                    )}
-                                                                    {mail["agenda-info"].coherence && mail["agenda-info"].coherence !== "cohérent" && (
-                                                                        <p><span className="font-bold text-amber-500">Cohérence :</span> {mail["agenda-info"].coherence}</p>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                        )}
+                                                            ) : (
+                                                                <button
+                                                                    onClick={() => setConfirmDelete({ type: 'consult', key: entry.id, label: entry.destinataire })}
+                                                                    className="p-2 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                                                                    title="Marquer comme traité"
+                                                                >
+                                                                    <Icon name="circle-check" size={18} />
+                                                                </button>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
-                                            </div>
-                                        </div>
-                                        );
-                                    })}
-
-                                    {/* ÉTAT VIDE */}
-                                    {rootHandle && filteredEmails.length === 0 && (
-                                        <div className="py-20 text-center animate-slide-up">
-                                            <div className="inline-flex p-4 bg-slate-100 dark:bg-slate-800 rounded-full text-slate-400 mb-4">
-                                                <Icon name="search-x" size={32} />
-                                            </div>
-                                            <p className="text-slate-500 font-medium">
-                                                {searchTerm ? "Aucun mail ne correspond à votre recherche." : "Aucun mail dans cette catégorie."}
-                                            </p>
+                                            ))}
+                                            {filteredConsult.length === 0 && (
+                                                <div className="py-20 text-center animate-slide-up">
+                                                    <div className="inline-flex p-4 bg-slate-100 dark:bg-slate-800 rounded-full text-slate-400 mb-4">
+                                                        <Icon name="check-circle" size={32} />
+                                                    </div>
+                                                    <p className="text-slate-500 font-medium">
+                                                        {taskSearchTerm ? "Aucune consultation ne correspond." : "Aucune consultation en cours."}
+                                                    </p>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
-                                </div>
+
+                                    {/* ---- TO-SEND SECTION ---- */}
+                                    {activeTaskSection === "to-send" && (
+                                        <div className="space-y-3">
+                                            {filteredToSend.map(file => {
+                                                const isExpanded = expandedTaskCard === file.filename;
+                                                return (
+                                                <div key={file.filename} className="animate-slide-up bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-2xl group hover:shadow-xl transition-all">
+                                                    <div className="flex items-center">
+                                                        <div className="flex-1 p-5">
+                                                            <div className="flex items-center gap-3 mb-1">
+                                                                <span className="font-bold text-slate-800 dark:text-slate-100">{file.recipient}</span>
+                                                                {file.date && <span className="text-[10px] text-slate-400 font-mono">{file.date}</span>}
+                                                            </div>
+                                                            <p className="text-sm text-slate-500">{file.subject || "\u2014"}</p>
+                                                            <p className="text-[10px] text-slate-400 font-mono mt-1">{file.filename}</p>
+                                                        </div>
+                                                        <div className="p-5 flex items-center gap-2">
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); setExpandedTaskCard(isExpanded ? null : file.filename); }}
+                                                                className={`p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-blue-500 transition-all ${isExpanded ? 'text-blue-500 bg-blue-50 dark:bg-blue-900/20' : ''}`}
+                                                                title="Détails"
+                                                            >
+                                                                <Icon name={isExpanded ? "chevron-up" : "chevron-down"} size={18} />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => setEditModal({ type: 'to-send', key: file.filename, content: file.rawContent })}
+                                                                className="p-2 rounded-lg text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all"
+                                                                title="Éditer"
+                                                            >
+                                                                <Icon name="pencil" size={18} />
+                                                            </button>
+                                                            {confirmDelete?.type === 'to-send' && confirmDelete?.key === file.filename ? (
+                                                                <div className="flex items-center gap-1">
+                                                                    <button onClick={() => removeToSendFile(file.filename)} className="p-1.5 bg-red-100 dark:bg-red-900/30 text-red-600 rounded-lg hover:bg-red-200 transition-all">
+                                                                        <Icon name="check" size={14} />
+                                                                    </button>
+                                                                    <button onClick={() => setConfirmDelete(null)} className="p-1.5 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-lg hover:bg-slate-200 transition-all">
+                                                                        <Icon name="x" size={14} />
+                                                                    </button>
+                                                                </div>
+                                                            ) : (
+                                                                <button
+                                                                    onClick={() => setConfirmDelete({ type: 'to-send', key: file.filename, label: file.recipient })}
+                                                                    className="p-2 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                                                                    title="Marquer comme envoyé"
+                                                                >
+                                                                    <Icon name="circle-check" size={18} />
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* FLYOVER TO-SEND */}
+                                                    <div className={`card-expand ${isExpanded ? 'open' : ''}`}>
+                                                        <div className="px-5 pb-5 pt-1 border-t border-slate-100 dark:border-slate-800">
+                                                            <div className="mt-3 space-y-3 card-expand-inner">
+                                                                {/* Destinataire(s) */}
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="flex-1">
+                                                                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Destinataire</div>
+                                                                        <p className="text-sm text-blue-600 dark:text-blue-400 font-mono">{file.to || "\u2014"}</p>
+                                                                    </div>
+                                                                    {file.to && (
+                                                                        <button
+                                                                            onClick={() => copyToClipboard(file.to, `to:${file.filename}`)}
+                                                                            className="p-2 rounded-lg text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-all"
+                                                                            title="Copier le destinataire"
+                                                                        >
+                                                                            <Icon name={copiedField === `to:${file.filename}` ? "check-circle" : "clipboard-copy"} size={16} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                                {file.cc && (
+                                                                    <div className="flex items-center gap-2">
+                                                                        <div className="flex-1">
+                                                                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Copie</div>
+                                                                            <p className="text-sm text-slate-600 dark:text-slate-300 font-mono">{file.cc}</p>
+                                                                        </div>
+                                                                        <button
+                                                                            onClick={() => copyToClipboard(file.cc, `cc:${file.filename}`)}
+                                                                            className="p-2 rounded-lg text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-all"
+                                                                            title="Copier la copie"
+                                                                        >
+                                                                            <Icon name={copiedField === `cc:${file.filename}` ? "check-circle" : "clipboard-copy"} size={16} />
+                                                                        </button>
+                                                                    </div>
+                                                                )}
+                                                                {/* Objet */}
+                                                                <div>
+                                                                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Objet</div>
+                                                                    <p className="text-sm font-bold text-slate-700 dark:text-slate-200">{file.subject || "\u2014"}</p>
+                                                                </div>
+                                                                {/* Corps */}
+                                                                <div className="flex items-start gap-2">
+                                                                    <div className="flex-1">
+                                                                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Corps du mail</div>
+                                                                        <div className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap border-l-4 border-blue-500/20 pl-4 max-h-60 overflow-y-auto">
+                                                                            {file.body || "\u2014"}
+                                                                        </div>
+                                                                    </div>
+                                                                    {file.body && (
+                                                                        <button
+                                                                            onClick={() => copyToClipboard(file.body, `body:${file.filename}`)}
+                                                                            className="p-2 rounded-lg text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-all mt-4"
+                                                                            title="Copier le corps"
+                                                                        >
+                                                                            <Icon name={copiedField === `body:${file.filename}` ? "check-circle" : "clipboard-copy"} size={16} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                );
+                                            })}
+                                            {filteredToSend.length === 0 && (
+                                                <div className="py-20 text-center animate-slide-up">
+                                                    <div className="inline-flex p-4 bg-slate-100 dark:bg-slate-800 rounded-full text-slate-400 mb-4">
+                                                        <Icon name="send" size={32} />
+                                                    </div>
+                                                    <p className="text-slate-500 font-medium">
+                                                        {taskSearchTerm ? "Aucun mail ne correspond." : "Aucun mail à envoyer."}
+                                                    </p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* ---- TO-WORK SECTION ---- */}
+                                    {activeTaskSection === "to-work" && (
+                                        <div className="space-y-3">
+                                            {filteredToWork.map(task => {
+                                                const isExpanded = expandedTaskCard === task.dirName;
+                                                return (
+                                                <div key={task.dirName} className="animate-slide-up bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-2xl group hover:shadow-xl transition-all">
+                                                    <div className="flex items-center">
+                                                        <div className="flex-1 p-5">
+                                                            <div className="flex items-center gap-3 mb-1">
+                                                                <span className="font-bold text-slate-800 dark:text-slate-100">{task.label}</span>
+                                                            </div>
+                                                            {task.documents.length > 0 && (
+                                                                <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
+                                                                    <Icon name="paperclip" size={12} />
+                                                                    {task.documents.length} document(s)
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                        <div className="p-5 flex items-center gap-2">
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); setExpandedTaskCard(isExpanded ? null : task.dirName); }}
+                                                                className={`p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-blue-500 transition-all ${isExpanded ? 'text-blue-500 bg-blue-50 dark:bg-blue-900/20' : ''}`}
+                                                                title="Détails"
+                                                            >
+                                                                <Icon name={isExpanded ? "chevron-up" : "chevron-down"} size={18} />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => setEditModal({ type: 'to-work', key: task.dirName, content: task.checklist })}
+                                                                className="p-2 rounded-lg text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all"
+                                                                title="Éditer la checklist"
+                                                            >
+                                                                <Icon name="pencil" size={18} />
+                                                            </button>
+                                                            {confirmDelete?.type === 'to-work' && confirmDelete?.key === task.dirName ? (
+                                                                <div className="flex items-center gap-1">
+                                                                    <button onClick={() => removeToWorkTask(task.dirName)} className="p-1.5 bg-red-100 dark:bg-red-900/30 text-red-600 rounded-lg hover:bg-red-200 transition-all">
+                                                                        <Icon name="check" size={14} />
+                                                                    </button>
+                                                                    <button onClick={() => setConfirmDelete(null)} className="p-1.5 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-lg hover:bg-slate-200 transition-all">
+                                                                        <Icon name="x" size={14} />
+                                                                    </button>
+                                                                </div>
+                                                            ) : (
+                                                                <button
+                                                                    onClick={() => setConfirmDelete({ type: 'to-work', key: task.dirName, label: task.label })}
+                                                                    className="p-2 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                                                                    title="Marquer comme terminé"
+                                                                >
+                                                                    <Icon name="circle-check" size={18} />
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* FLYOVER TO-WORK */}
+                                                    <div className={`card-expand ${isExpanded ? 'open' : ''}`}>
+                                                        <div className="px-5 pb-5 pt-1 border-t border-slate-100 dark:border-slate-800">
+                                                            <div className="mt-3 space-y-4 card-expand-inner">
+                                                                {/* Checklist */}
+                                                                {task.checklist && (
+                                                                    <div>
+                                                                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Plan d'action</div>
+                                                                        <div className="space-y-0.5">{renderChecklist(task.checklist)}</div>
+                                                                    </div>
+                                                                )}
+                                                                {/* Documents */}
+                                                                {task.documents.length > 0 && (
+                                                                    <div>
+                                                                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Documents</div>
+                                                                        <div className="flex flex-wrap gap-2">
+                                                                            {task.documents.map(docName => (
+                                                                                <button
+                                                                                    key={docName}
+                                                                                    onClick={() => openToWorkFile(task.dirName, docName)}
+                                                                                    className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-blue-500 hover:bg-white dark:hover:bg-slate-700 transition-all shadow-sm group/doc"
+                                                                                >
+                                                                                    <Icon name={getFileIcon(docName)} size={14} className="text-blue-500 group-hover/doc:scale-110 transition-transform" />
+                                                                                    <span className="text-xs font-bold truncate max-w-[180px]">{docName}</span>
+                                                                                </button>
+                                                                            ))}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                );
+                                            })}
+                                            {filteredToWork.length === 0 && (
+                                                <div className="py-20 text-center animate-slide-up">
+                                                    <div className="inline-flex p-4 bg-slate-100 dark:bg-slate-800 rounded-full text-slate-400 mb-4">
+                                                        <Icon name="clipboard-list" size={32} />
+                                                    </div>
+                                                    <p className="text-slate-500 font-medium">
+                                                        {taskSearchTerm ? "Aucune tâche ne correspond." : "Aucune tâche en cours."}
+                                                    </p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </>)}
+
                             </div>
                         </main>
                     </div>
@@ -525,11 +1218,11 @@
                                 : 'bg-red-500 text-white'
                         }`}>
                             <Icon name={saveStatus === 'saved' ? 'check-circle' : 'alert-circle'} size={16} />
-                            {saveStatus === 'saved' ? 'Instructions sauvegardées' : 'Erreur de sauvegarde'}
+                            {saveStatus === 'saved' ? 'Sauvegardé' : 'Erreur de sauvegarde'}
                         </div>
                     )}
 
-                    {/* MODAL */}
+                    {/* MODAL MAIL DETAILS (categorization) */}
                     {selectedMail && (
                         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md bg-slate-950/40">
                             <div className="bg-white dark:bg-darkCard w-full max-w-4xl max-h-[90vh] rounded-[2rem] shadow-2xl overflow-hidden flex flex-col animate-slide-up border border-white/10">
@@ -573,6 +1266,37 @@
                                         </div>
                                     </div>
                                 )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODAL EDITION (tasks) */}
+                    {editModal && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md bg-slate-950/40">
+                            <div className="bg-white dark:bg-darkCard w-full max-w-4xl max-h-[90vh] rounded-[2rem] shadow-2xl overflow-hidden flex flex-col animate-slide-up border border-white/10">
+                                <div className="p-6 border-b dark:border-slate-800 flex justify-between items-center">
+                                    <div>
+                                        <h2 className="text-lg font-black">
+                                            {editModal.type === 'to-send' ? `Éditer : ${editModal.key}` : `Éditer checklist : ${editModal.key}`}
+                                        </h2>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button onClick={saveEditModal} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold text-sm hover:bg-blue-700 transition-all flex items-center gap-2">
+                                            <Icon name="save" size={14} /> Sauvegarder
+                                        </button>
+                                        <button onClick={() => setEditModal(null)} className="p-3 bg-slate-100 dark:bg-slate-800 rounded-full hover:bg-slate-200 transition-all">
+                                            <Icon name="x" size={18} />
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="flex-1 p-6 overflow-hidden">
+                                    <textarea
+                                        value={editModal.content}
+                                        onChange={(e) => setEditModal({ ...editModal, content: e.target.value })}
+                                        className="w-full h-full min-h-[50vh] bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4 font-mono text-sm text-slate-700 dark:text-slate-300 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none"
+                                        spellCheck={false}
+                                    />
+                                </div>
                             </div>
                         </div>
                     )}
