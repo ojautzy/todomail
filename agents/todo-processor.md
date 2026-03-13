@@ -211,6 +211,22 @@ Ce mode exécute les actions de finalisation après validation de la proposition
 
 ### Étape 2 — Actions spécifiques à la catégorie
 
+**Format obligatoire des fichiers `to-send/` :** Tous les fichiers `.md` créés dans `to-send/` doivent être structurés comme des mails prêts à envoyer, avec un frontmatter YAML contenant les métadonnées d'envoi :
+
+```markdown
+---
+to: prenom.nom@email.com
+cc: autre.personne@email.com (optionnel, omettre le champ si absent)
+subject: Objet du mail
+date: AAAA-MM-JJ
+ref_mail_id: {id du mail source}
+---
+
+Corps du mail en markdown...
+```
+
+Les champs `to` et `subject` sont obligatoires. Le champ `cc` n'est inclus que s'il y a des destinataires en copie. Le corps du mail suit le frontmatter après la ligne `---` de fermeture.
+
 #### do-decide
 Sauvegarder le projet d'arbitrage validé dans `{working_dir}/to-send/{nom_destinataire}_{to_send_number}.md`
 
@@ -223,6 +239,8 @@ Sauvegarder le projet d'arbitrage validé dans `{working_dir}/to-send/{nom_desti
 #### do-other
 1. Rédiger un mail de transmission pour suite à donner
 2. Sauvegarder dans `{working_dir}/to-send/{nom_destinataire}_{to_send_number}.md`
+3. Préparer l'entrée `consult.md` dans le champ `finalization.consult_entry` de `_treatment.json` :
+   - Format : `| {id} | {date_du_jour} | {nom_destinataire} | {résumé} |`
 
 #### do-self
 1. Rédiger un projet de mail de réponse (accusé de réception avec échéance)
