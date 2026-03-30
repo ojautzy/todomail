@@ -38,6 +38,7 @@ Principe : si Claude doit pouvoir utiliser une capacité de sa propre initiative
 | `agenda` | Connaissance du programme de l'utilisateur sur une période (brique fondamentale calendrier) |
 | `disponibilites` | Connaissance des créneaux libres avec filtres contextuels (déplacements, habitudes, préférences) |
 | `detection-conflits` | Détection des conflits, superpositions et incohérences dans l'agenda |
+| `classify-attachment` | Classement des pièces jointes dans `docs/` selon la structure canonique AURA/MIN avec garde-fou structurel |
 
 ## Agents
 
@@ -110,6 +111,8 @@ todomail/
 │   ├── disponibilites/
 │   │   └── SKILL.md
 │   ├── detection-conflits/
+│   │   └── SKILL.md
+│   ├── classify-attachment/
 │   │   └── SKILL.md
 │   └── dashboard.html
 ├── CONNECTORS.md
