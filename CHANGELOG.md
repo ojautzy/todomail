@@ -7,6 +7,13 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [1.3.0] - 2026-03-30
+
+### Corrigé
+- **Opérations fichiers Cowork** — Ajout de pré-autorisations `allow_cowork_file_delete` dans `process-todo`, `todo-processor`, `sort-mails` et `check-inbox` pour corriger les `mv`/`rm` qui échouent silencieusement avec "Operation not permitted" sur les fichiers créés dans une session Cowork antérieure. Ajout de gestion d'erreur avec retry automatique.
+
+---
+
 ## [1.2.0] - 2026-03-13
 
 ### Ajouté
