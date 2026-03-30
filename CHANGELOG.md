@@ -7,6 +7,16 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [1.4.0] - 2026-03-30
+
+### Ajouté
+- **Skill `classify-attachment`** — Nouveau skill centralisant les règles de classement des pièces jointes dans `docs/`. Impose la structure canonique à deux branches (`docs/AURA/` et `docs/MIN/`), les conventions de nommage (MAJUSCULES, underscores), et un garde-fou qui refuse tout chemin hors de cette hiérarchie. Inclut un algorithme en 4 étapes (branche racine, recherche RAG filtrée, fallback par table de correspondances, validation) et une table de 18 correspondances thématiques.
+
+### Modifié
+- **todo-processor** — Les trois modes (autonomous, analyze, finalize) délèguent désormais le classement des PJ au skill `classify-attachment` au lieu de contenir leur propre logique basée sur `search_doc` sans contrainte structurelle. Cela empêche la création de répertoires parasites à la racine de `docs/`.
+
+---
+
 ## [1.3.0] - 2026-03-30
 
 ### Corrigé
