@@ -71,6 +71,12 @@ Passage à l'exécution des actions simples...
 
 ## Étape 2 — Exécution des actions simples
 
+### Pré-autorisation des opérations fichiers
+
+Avant d'exécuter les actions simples, appeler l'outil `allow_cowork_file_delete` avec le chemin du répertoire de travail pour pré-autoriser les opérations de suppression et déplacement de fichiers. Cette étape est nécessaire car le filesystem Cowork protège les fichiers créés dans des sessions précédentes contre la suppression/déplacement. L'appel est idempotent et sans effet si la permission est déjà accordée.
+
+> **Gestion d'erreur :** Si un `mv` échoue avec "Operation not permitted", appeler `allow_cowork_file_delete` sur le chemin du fichier/répertoire concerné, puis réessayer l'opération. Cet outil déverrouille la suppression pour tout le dossier monté.
+
 Traiter les instructions qui ne nécessitent pas d'interaction utilisateur. Pour chaque instruction collectée à l'étape 1 :
 
 ### Action `keep`
