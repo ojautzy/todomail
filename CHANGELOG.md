@@ -7,6 +7,14 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [1.4.1] - 2026-03-30
+
+### Corrigé
+- **Skill `classify-attachment`** — Ajout du frontmatter YAML conforme Cowork (`name`, `description`, `version`) qui manquait et empêchait l'installation du plugin. Rétablissement des accents. Reformulation de la section « Sortie attendue » en « Format de stockage dans `_treatment.json` » avec ajout du champ `classification_anomaly`.
+- **todo-processor** — Utilisation de chemins absolus `${CLAUDE_PLUGIN_ROOT}` pour les 3 références au skill. Correction des formulations « si le skill retourne null » en « si l'algorithme aboutit à une anomalie ».
+
+---
+
 ## [1.4.0] - 2026-03-30
 
 ### Ajouté
