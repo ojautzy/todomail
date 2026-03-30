@@ -110,7 +110,7 @@ Appeler l'outil `allow_cowork_file_delete` avec le chemin du répertoire du mail
 
 ### Étape 3 — Classement des pièces jointes
 
-Lire le skill `skills/classify-attachment/SKILL.md` et appliquer son algorithme de classement pour chaque pièce jointe présente dans le répertoire du mail. Déplacer chaque PJ vers le chemin retourné par le skill. Si le skill retourne `null` (anomalie), consigner l'anomalie dans `_treatment.json` sans déplacer la PJ.
+Lire le fichier `${CLAUDE_PLUGIN_ROOT}/skills/classify-attachment/SKILL.md` et appliquer son algorithme de classement pour chaque pièce jointe présente dans le répertoire du mail. Déplacer chaque PJ vers le chemin déterminé par l'algorithme. Si l'algorithme aboutit à une anomalie (`classified_to` = `null`), consigner l'anomalie dans `_treatment.json` (champ `classification_anomaly`) sans déplacer la PJ.
 
 ### Étape 4 — Nettoyage
 
@@ -191,7 +191,7 @@ Rédiger un **projet d'arbitrage** structuré en markdown :
 ### Étape 4 — Pré-calcul des métadonnées de finalisation
 
 Préparer les informations qui seront nécessaires en Phase 2 :
-- Classification proposée pour chaque pièce jointe : appliquer l'algorithme du skill `classify-attachment` (le chemin retourné DOIT commencer par `docs/AURA/` ou `docs/MIN/`)
+- Classification proposée pour chaque pièce jointe : lire `${CLAUDE_PLUGIN_ROOT}/skills/classify-attachment/SKILL.md` et appliquer son algorithme (le chemin DOIT commencer par `docs/AURA/` ou `docs/MIN/`)
 - Suggestions mémoire
 - Résumé complet du mail (pour la rédaction to-send en Phase 2)
 
@@ -260,7 +260,7 @@ Sauvegarder le projet d'arbitrage validé dans `{working_dir}/to-send/{nom_desti
 
 Exécuter le même bloc de finalisation que le mode autonomous :
 1. **Archiver le mail** : renommer `message.eml` → `{id}.eml`, déplacer dans `{working_dir}/mails/AAAA/MM/`
-2. **Classer les pièces jointes** : utiliser les classifications pré-calculées en Phase 1 (champ `analysis.attachments[].classified_to`). Si le répertoire cible existe, déplacer la PJ. Sinon, **réappliquer l'algorithme du skill `classify-attachment`** pour reclasser (ne PAS inventer un chemin hors de la structure AURA/MIN).
+2. **Classer les pièces jointes** : utiliser les classifications pré-calculées en Phase 1 (champ `analysis.attachments[].classified_to`). Si le répertoire cible existe, déplacer la PJ. Sinon, **relire `${CLAUDE_PLUGIN_ROOT}/skills/classify-attachment/SKILL.md` et réappliquer son algorithme** pour reclasser (ne PAS inventer un chemin hors de la structure AURA/MIN).
 3. **Nettoyer** : déplacer le sous-répertoire du mail vers `{working_dir}/to-clean-by-user/`
 4. **Suggestions mémoire** : consigner dans `memory_updates` (NE PAS écrire dans CLAUDE.md ni memory/)
 
