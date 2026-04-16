@@ -7,6 +7,28 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.0.0-alpha.1] - 2026-04-16
+
+### BREAKING — Refactoring v2 Phase 1
+
+- Fork definitif Claude Code : suppression de tout le code de compatibilite Cowork (`allow_cowork_file_delete`, notes VM).
+- Le plugin n'est plus compatible avec Claude Cowork. Pour la derniere version Cowork, voir tag v1.4.1.
+
+### Ajoute
+
+- `.mcp.json` : declaration explicite du serveur MCP local via proxy stdio (`archiva-pro`). Remplace le placeholder `~~todomail-mcp` et resout le probleme de double serveur MCP.
+- `hooks/hooks.json` : squelette pour les 5 hooks Claude Code (a remplir en Phase 4).
+- `lib/` : utilitaires partages Python (`state.py`, `fs_utils.py`, `rag_cache.py`, `error_modes.py`).
+- Schema JSON v2 : wrapper `_meta` avec `schema_version`, `session_id`, `generated_at` pour `pending_emails.json` et `instructions.json`.
+- Strategie d'erreur formalisee : `lenient` par defaut, `resume` toujours actif, `--strict` opt-in.
+
+### Supprime
+
+- Toutes les references a `allow_cowork_file_delete` dans les commandes, agents et skills.
+- Notes et mentions Cowork dans la documentation (README, CONNECTORS, CLAUDE.md, README.dashboard).
+
+---
+
 ## [1.4.1] - 2026-03-30
 
 ### Corrigé

@@ -1,6 +1,6 @@
 # TodoMail
 
-Plugin de traitement intelligent des emails reçus et de gestion d'agenda pour Claude Desktop (Cowork).
+Plugin de traitement intelligent des emails reçus et de gestion d'agenda pour Claude Code.
 
 ## Présentation
 
@@ -87,6 +87,7 @@ Les agendas sont consultés en lecture seule : aucune modification n'est effectu
 todomail/
 ├── .claude-plugin/
 │   └── plugin.json
+├── .mcp.json                    ← declaration MCP locale (proxy stdio archiva-pro)
 ├── commands/
 │   ├── start.md
 │   ├── check-inbox.md
@@ -115,6 +116,15 @@ todomail/
 │   ├── classify-attachment/
 │   │   └── SKILL.md
 │   └── dashboard.html
+├── hooks/
+│   ├── hooks.json               ← squelette des hooks Claude Code
+│   └── README.md
+├── lib/                         ← utilitaires partages Python
+│   ├── state.py                 ← gestion du state.json persistant
+│   ├── fs_utils.py              ← operations fichiers idempotentes + JSON v2
+│   ├── rag_cache.py             ← cache RAG en memoire de session
+│   ├── error_modes.py           ← strategie d'erreur (lenient/strict/resume)
+│   └── README.md
 ├── CONNECTORS.md
 ├── README.md
 └── README.dashboard.md
@@ -150,7 +160,7 @@ répertoire de travail/
 
 ## Configuration
 
-Le plugin travaille directement dans le répertoire sélectionné par l'utilisateur pour la tâche Cowork. Aucune configuration de chemin n'est nécessaire : tout est créé automatiquement par la commande `/start`, y compris le fichier `dashboard.html` placé à la racine du répertoire de travail.
+Le plugin travaille directement dans le répertoire de travail de l'utilisateur. Aucune configuration de chemin n'est nécessaire : tout est créé automatiquement par la commande `/start`, y compris le fichier `dashboard.html` placé à la racine du répertoire de travail.
 
 La configuration IMAP (serveur, identifiants), les paramètres d'indexation et la configuration des calendriers iCalendar sont gérés par le connecteur MCP `~~todomail-mcp` via son fichier `.env`.
 
@@ -179,6 +189,10 @@ Les fichiers `pending_emails.json` servent d'interface entre Claude et le dashbo
 ## Dépendances
 
 - `odfpy` (Python) — pour la lecture directe des fichiers OpenDocument par Claude (`pip install odfpy`)
+
+## Compatibilite
+
+A partir de la version 2.0, le plugin TodoMail est exclusivement compatible avec **Claude Code**. Il n'est plus compatible avec Claude Cowork. Pour la derniere version compatible Cowork, voir le tag `v1.4.1`.
 
 ## Changelog
 

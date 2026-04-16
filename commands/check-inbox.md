@@ -29,8 +29,6 @@ Dans ce sous-répertoire figure :
 
 **Important** : le tool s'exécute en tâche de fond. Attendre la fin de l'exécution avant de passer à l'étape suivante.
 
-> **Note :** La skill sort-mails effectuera une pré-autorisation des opérations fichiers via `allow_cowork_file_delete` avant les déplacements.
-
 ## Étape 2 — Tri des mails
 
 Exécuter la skill sort-mails pour trier automatiquement les mails dans les catégories d'action :

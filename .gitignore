@@ -20,3 +20,10 @@ to-brief/
 docs/
 memory/
 consult.md
+
+# Plugin runtime data (state.json fallback when CLAUDE_PLUGIN_DATA is not set)
+.plugin-data/
+
+# Refactoring plan and per-phase prompts (working documents, not part of the plugin)
+REFACTOR_PLAN.md
+refactor-prompts/

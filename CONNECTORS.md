@@ -11,7 +11,7 @@ workflows in terms of categories rather than specific products.
 | Category | Placeholder | Options | Obligatoire |
 |----------|-------------|---------|-------------|
 | Gestion emails et RAG | `~~todomail-mcp` | Serveur MCP unique fournissant à la fois la gestion IMAP et la recherche RAG sur les documents et emails | Oui |
-| Automatisation navigateur | Claude in Chrome | Extension Chrome + connecteur Cowork pour piloter le navigateur de l'utilisateur | Recommandé |
+| Automatisation navigateur | Claude in Chrome | Extension Chrome pour piloter le navigateur de l'utilisateur | Recommandé |
 
 ## Tools fournis par le connecteur
 
@@ -72,7 +72,7 @@ Le connecteur Claude in Chrome permet à Claude de piloter le navigateur de l'ut
 ### Installation
 
 1. Installer l'extension « Claude in Chrome » dans le navigateur Chrome de l'utilisateur
-2. Dans Cowork, activer le connecteur Claude in Chrome dans les paramètres
+2. Activer l'extension Claude in Chrome dans les paramètres du navigateur
 
 ## Configuration
 
