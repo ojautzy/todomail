@@ -97,10 +97,6 @@ Ce mode effectue le traitement complet du mail sans interaction utilisateur.
 2. Lister et lire toutes les pièces jointes selon la table des méthodes ci-dessus
 3. Contextualiser via le lookup mémoire
 
-### Étape préalable — Pré-autorisation des opérations fichiers
-
-Appeler l'outil `allow_cowork_file_delete` avec le chemin du répertoire du mail (`chemin_mail`) pour pré-autoriser les opérations de suppression et déplacement de fichiers. Cette étape est nécessaire car le filesystem Cowork protège les fichiers des sessions précédentes.
-
 ### Étape 2 — Archivage du mail
 
 1. Renommer `message.eml` en `{id}.eml`
@@ -209,10 +205,6 @@ Ce mode exécute les actions de finalisation après validation de la proposition
 
 1. Lire le `_treatment.json` existant (produit en mode analyze)
 2. Extraire le contenu validé et le destinataire validé depuis le prompt
-
-### Étape préalable — Pré-autorisation des opérations fichiers
-
-Appeler l'outil `allow_cowork_file_delete` avec le chemin du répertoire du mail (`chemin_mail`) pour pré-autoriser les opérations de suppression et déplacement de fichiers. Cette étape est nécessaire car le filesystem Cowork protège les fichiers des sessions précédentes.
 
 ### Étape 2 — Actions spécifiques à la catégorie
 
@@ -341,4 +333,3 @@ Mettre à jour le fichier avec `mode: "finalize"`, `status: "success"`, et le d�
 - Les contenus de synthèse sont fidèles aux sources effectivement lues
 - Le fichier est du JSON valide
 - En mode autonomous/finalize : les fichiers ont bien été déplacés avant de reporter `status: "success"`
-- En mode autonomous/finalize : si un `mv` échoue avec "Operation not permitted", appeler `allow_cowork_file_delete` puis réessayer

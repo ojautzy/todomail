@@ -64,10 +64,6 @@ Après la fin de tous les agents, vérifier que chaque sous-répertoire de `inbo
 
 Cela garantit qu'aucun résidu d'un cycle précédent ne persiste.
 
-### Pré-autorisation des opérations fichiers
-
-Avant de déplacer les mails, appeler l'outil `allow_cowork_file_delete` avec le chemin du répertoire `inbox/` pour pré-autoriser les opérations de déplacement. Cette étape est nécessaire pour les mails téléchargés dans une session Cowork précédente.
-
 ### 2b. Lecture des analyses et tri
 
 Pour chaque sous-répertoire de `inbox/` contenant un `_analysis.json` :

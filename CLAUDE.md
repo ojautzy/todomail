@@ -2,7 +2,7 @@
 
 ## Structure du projet
 
-Plugin Claude Cowork : skills, agents et commandes pour le traitement des emails et la gestion d'agenda.
+Plugin Claude Code : skills, agents et commandes pour le traitement des emails et la gestion d'agenda.
 
 ```
 todomail/
@@ -52,6 +52,18 @@ Suivre le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) :
 ## Conventions de développement
 
 - Les noms de fichiers et répertoires sont en **kebab-case**
-- Les skills externes (plateforme Cowork) sont préfixés « skill plateforme » dans la documentation
+- Les skills externes (plateforme Claude Code) sont préfixés « skill plateforme » dans la documentation
 - Les skills internes (ce plugin) sont préfixés « skill plugin » si distinction nécessaire
 - Les références internes utilisent `${CLAUDE_PLUGIN_ROOT}/` comme racine
+
+## Utilitaires partages (lib/)
+
+Le repertoire `lib/` contient des helpers Python partages par les skills et commandes :
+
+- `lib/state.py` — gestion du `state.json` persistant (checkpoints, erreurs, verrous)
+- `lib/fs_utils.py` — operations fichiers idempotentes (`safe_mv`, `safe_rm`, `atomic_write_json`) et helpers JSON v2
+- `lib/rag_cache.py` — cache RAG en memoire de session
+- `lib/error_modes.py` — strategie d'erreur (`lenient`/`strict`/`resume`)
+
+Ces helpers seront exploites par les skills et commandes a partir de la Phase 2 du refactoring.
+Voir `lib/README.md` pour la documentation complete.

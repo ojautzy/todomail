@@ -1,15 +1,15 @@
-# **Documentation Technique : Claude Cowork \- Mail Dashboard**
+# **Documentation Technique : TodoMail Dashboard**
 
-Ce document détaille le fonctionnement, la structure des données et les fonctionnalités du tableau de bord interactif de gestion des mails de Claude Cowork.
+Ce document détaille le fonctionnement, la structure des données et les fonctionnalités du tableau de bord interactif de gestion des mails de TodoMail.
 
 ## **1\. Vue d'Ensemble**
 
-L'application est une interface **"Human-in-the-loop"** (l'humain dans la boucle). Elle sert de pont décisionnel entre Claude Cowork (l'Agent IA) et l'utilisateur final pour **l'ensemble des 7 catégories de mails triés**.
+L'application est une interface **"Human-in-the-loop"** (l'humain dans la boucle). Elle sert de pont décisionnel entre Claude (l'Agent IA) et l'utilisateur final pour **l'ensemble des 7 catégories de mails triés**.
 
-* **Claude Cowork** prépare le travail en triant les mails et en générant des synthèses JSON adaptées à chaque catégorie.
+* **Claude** prépare le travail en triant les mails et en générant des synthèses JSON adaptées à chaque catégorie.
 * **Le Dashboard** présente ces informations de manière ergonomique avec une navigation par catégorie.
 * **L'Utilisateur** navigue entre les catégories, consulte les synthèses contextuelles et ajuste les actions si nécessaire.
-* **Claude Cowork** exécute les décisions via le skill `process-todo` basé sur les fichiers `instructions.json` générés automatiquement par le dashboard.
+* **Claude** exécute les décisions via le skill `process-todo` basé sur les fichiers `instructions.json` générés automatiquement par le dashboard.
 
 ## **2\. Prérequis**
 
@@ -66,7 +66,7 @@ Chaque sous-répertoire de `todo/` contient son propre `pending_emails.json` (en
 
 ### **A. pending\_emails.json (par catégorie)**
 
-Chaque fichier `pending_emails.json` est généré par Claude Cowork (étape 2 du skill `sort-mails`) et contient les champs communs `id`, `sender`, `date` plus des champs spécifiques à la catégorie :
+Chaque fichier `pending_emails.json` est généré par Claude (étape 2 du skill `sort-mails`) et contient les champs communs `id`, `sender`, `date` plus des champs spécifiques à la catégorie :
 
 **trash :**
 ```json
