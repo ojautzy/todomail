@@ -302,7 +302,7 @@ Lorsque la requête est similaire à "Qui est X" ou "Qu'a-t-on à propos de YYY"
 ## Intégration avec les autres composants
 
 - **check-inbox** : lors du tri des mails, si un expéditeur inconnu apparaît fréquemment ou si un nouveau sujet émerge, il est recommandé de mettre à jour la mémoire via ce skill.
-- **agent `mail-analyzer`** : utilise le RAG MCP (`search_mail`, `search_doc`, `search_all`) pour contextualiser l'expéditeur et le sujet de chaque mail. Cet agent s'exécute dans un contexte isolé et n'appelle pas directement ce skill, mais exploite les mêmes sources de mémoire (CLAUDE.md, memory/).
+- **skill `sort-mails`** : utilise le RAG MCP (`search_mail`, `search_doc`, `search_all`) pour contextualiser l'expéditeur et le sujet de chaque mail, en exploitant les mêmes sources de mémoire (CLAUDE.md, memory/). Les appels RAG sont mémoïsés via `lib/rag_cache.py` pour éviter les redondances.
 - **process-todo** : le traitement des actions complexes est délégué à l'agent `todo-processor` via `Task`. L'agent implémente directement le lookup flow (CLAUDE.md → memory/ → MCP) pour la contextualisation et produit des suggestions de mise à jour mémoire dans `_treatment.json`. La consolidation mémoire (écriture effective dans CLAUDE.md et memory/) est effectuée par process-todo après collecte de tous les résultats, en appliquant les conventions de ce skill.
 - **start** : le bootstrap initial de la mémoire est réalisé par la commande `/todomail:start`. Ce skill prend le relais pour la maintenance continue.
 - **agenda** : utilise ce skill pour l'enrichissement contextuel des événements (identification des participants, des sujets récurrents). Met à jour la mémoire quand de nouvelles réunions récurrentes ou de nouveaux lieux sont identifiés.

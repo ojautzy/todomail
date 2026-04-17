@@ -18,7 +18,7 @@ Ce skill n'a pas de commande dédiée. Il est utilisé comme référence par les
 Lorsqu'un fichier avec l'extension `.odt`, `.ods` ou `.odp` doit être lu (pièce jointe d'un mail, document de la base documentaire), utiliser le script Python fourni pour en extraire le contenu texte.
 
 Les cas typiques :
-- **agent `mail-analyzer`** : lecture des pièces jointes ODF pour analyser un mail et produire les synthèses dans `_analysis.json`
+- **skill `sort-mails`** : lecture des pièces jointes ODF pour analyser un mail et produire les synthèses dans `_analysis.json`
 - **process-todo** : lecture des pièces jointes pour produire des projets d'arbitrage, des synthèses détaillées ou des livrables
 
 ## Comment utiliser le script

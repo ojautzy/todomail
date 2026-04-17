@@ -28,7 +28,7 @@ Ce skill est déclenché :
 
 - **Par l'utilisateur** : "c'est quoi mon planning ?", "montre-moi ma
   journée", "qu'est-ce que j'ai demain ?", "mes réunions de la semaine"
-- **Par un autre composant** : l'agent `mail-analyzer` effectue
+- **Par un autre composant** : le skill `sort-mails` effectue
   directement les appels MCP calendrier pour les mails liés à
   l'agenda (sans passer par ce skill), le skill `disponibilites` pour
   contextualiser les créneaux
@@ -178,7 +178,7 @@ il retourne les informations sous forme structurée :
   contextualiser les créneaux libres
 - **skill `detection-conflits`** : appelé par ce skill pour analyser
   les événements
-- **agent `mail-analyzer`** : effectue directement les appels MCP
+- **skill `sort-mails`** : effectue directement les appels MCP
   calendrier (`fetch_calendar_events`, `get_availability`) pour les
   mails liés à l'agenda, sans passer par ce skill
 - **commande `/briefing`** : utilise ce skill pour obtenir les
