@@ -13,6 +13,41 @@ Le système de mémoire créé est ensuite géré de façon organique par le ski
 
 ## Instructions
 
+### Étape 0. Configuration du serveur MCP
+
+Cette étape détermine quel serveur MCP archiva sera utilisé par le plugin dans ce workspace. Elle est indispensable quand plusieurs serveurs archiva sont connectés dans Claude Desktop (ex: un serveur professionnel et un serveur personnel).
+
+#### 0a. Vérifie la présence d'une configuration existante
+
+Lire le fichier `.todomail-config.json` à la racine du répertoire de travail avec le tool `Read`.
+
+- **Si le fichier existe et contient un champ `expected_rag_name` :** appeler le tool MCP `status` et comparer `status.rag_name` avec `expected_rag_name`. 
+  - S'ils correspondent : passer à l'étape 1.
+  - S'ils diffèrent : afficher un message clair indiquant le serveur attendu vs détecté, proposer à l'utilisateur soit de corriger la connexion MCP dans Claude Desktop, soit de relancer la configuration via la section 0b ci-dessous. Ne pas continuer tant que le mismatch n'est pas résolu.
+
+- **Si le fichier n'existe pas :** passer à la section 0b pour le créer.
+
+#### 0b. Configuration initiale du serveur MCP
+
+1. Appeler `status` (MCP) pour récupérer le `rag_name` du serveur actuellement connecté.
+2. Inspecter la liste des tools MCP disponibles dans la session : si plusieurs serveurs archiva sont exposés (plusieurs UUID différents pour le même type de tool), tenter d'appeler `status` sur chacun pour collecter tous les `rag_name` disponibles.
+3. Présenter à l'utilisateur le(s) `rag_name` détecté(s) via `AskUserQuestion` :
+   - Si un seul serveur est détecté : demander confirmation que c'est bien celui à utiliser pour ce workspace.
+   - Si plusieurs serveurs sont détectés : proposer la liste et demander lequel utiliser.
+4. Écrire le fichier `.todomail-config.json` à la racine du répertoire de travail avec le contenu suivant :
+
+```json
+{
+  "schema_version": 1,
+  "expected_rag_name": "<nom_choisi>",
+  "configured_at": "<ISO8601 UTC>"
+}
+```
+
+5. Confirmer à l'utilisateur : `Serveur MCP configuré pour ce workspace : <nom_choisi>`.
+
+**Note importante :** le fichier `.todomail-config.json` est local au workspace et ne doit pas être commité. Il est automatiquement géré par le plugin.
+
 ### Étape 1. Vérifie l'existence des répertoires
 
 Vérifie que le répertoire de travail contient les répertoires suivants :

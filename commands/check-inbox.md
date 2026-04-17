@@ -5,6 +5,8 @@ allowed-tools: Read, Write, Bash(mkdir:*), Bash(mv:*), Bash(ls:*), Bash(python3:
 
 ## Vérification préalable
 
+### 1. Répertoires
+
 Vérifier que le répertoire de travail contient le répertoire suivant :
 - `inbox/`
 
@@ -15,7 +17,18 @@ Si ce répertoire est manquant :
 > "Le répertoire de travail n'est pas configuré correctement. Répertoires manquants : [liste]. Veuillez corriger la structure avant de relancer."
 > **Ne pas poursuivre. Attendre.**
 
-Si tout existe, poursuivre.
+### 2. Serveur MCP
+
+Lire `.todomail-config.json` à la racine du répertoire de travail. Appeler le tool MCP `status` et comparer `status.rag_name` avec `expected_rag_name` du fichier de config.
+
+- Si le fichier `.todomail-config.json` n'existe pas : demander à l'utilisateur de lancer `/todomail:start` pour configurer le workspace, puis arrêter.
+- Si `status.rag_name != expected_rag_name` :
+
+> **ARRÊT OBLIGATOIRE — Mauvais serveur MCP**
+> Afficher : "Le serveur MCP connecté (`<status.rag_name>`) ne correspond pas au serveur attendu pour ce workspace (`<expected_rag_name>`). Vérifier les connexions MCP dans Claude Desktop ou relancer `/todomail:start` pour reconfigurer."
+> **Ne pas poursuivre. Attendre.**
+
+Si tout existe et que le serveur correspond, poursuivre.
 
 ## Étape 1 — Téléchargement des mails
 

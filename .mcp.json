@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "todomail-mcp": {
-      "command": "/Users/olivier/Documents/Production/archiva-pro/.venv/bin/python3",
-      "args": ["/Users/olivier/Documents/Production/archiva-pro/src/mcp_proxy.py"]
-    }
-  }
-}

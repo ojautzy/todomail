@@ -66,6 +66,29 @@ Enum `ErrorAction` : `CONTINUE`, `STOP_AND_ASK`, `RETRY_LATER`
 
 Classe `ErrorHandler(mode)` : gere les erreurs selon le mode configure.
 
+### `config.py` — Config workspace `.todomail-config.json`
+
+Helpers pour gerer la config locale du workspace (fichier `.todomail-config.json` a la racine du repertoire de travail). Permet de desambiguer quand plusieurs serveurs MCP archiva sont connectes dans Claude Desktop.
+
+| Fonction | Description |
+|----------|-------------|
+| `config_path(workspace)` | Retourne le chemin du fichier de config |
+| `load_config(workspace)` | Charge la config (None si absente) |
+| `save_config(workspace, expected_rag_name)` | Cree/met a jour la config avec le nom du serveur attendu |
+| `check_rag_name(workspace, actual_rag_name)` | Verifie que le rag_name actuel correspond a l'attendu. Retourne `(ok, expected)` |
+
+Schema de `.todomail-config.json` :
+
+```json
+{
+  "schema_version": 1,
+  "expected_rag_name": "Archiva-Pro",
+  "configured_at": "2026-04-17T12:34:56+00:00"
+}
+```
+
+Ce fichier est cree automatiquement par `/start` et verifie par `/check-inbox` et `/process-todo`. Il est gitignore (ne doit pas etre committe).
+
 ## Schema JSON v2
 
 ### Principe

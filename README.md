@@ -87,7 +87,6 @@ Les agendas sont consultés en lecture seule : aucune modification n'est effectu
 todomail/
 ├── .claude-plugin/
 │   └── plugin.json
-├── .mcp.json                    ← declaration MCP locale (proxy stdio archiva-pro)
 ├── commands/
 │   ├── start.md
 │   ├── check-inbox.md
@@ -151,6 +150,7 @@ répertoire de travail/
 ├── docs/                       ← base documentaire (indexée par le connecteur MCP/RAG)
 ├── consult.md                  ← registre des consultations en cours
 ├── dashboard.html              ← interface interactive de gestion des mails
+├── .todomail-config.json       ← config MCP locale (expected_rag_name, géré par /start)
 ├── CLAUDE.md                   ← mémoire courante (~250 lignes max)
 └── memory/
     ├── people/                 ← profils des collaborateurs

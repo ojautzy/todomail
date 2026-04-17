@@ -20,6 +20,7 @@ to-brief/
 docs/
 memory/
 consult.md
+.todomail-config.json
 
 # Plugin runtime data (state.json fallback when CLAUDE_PLUGIN_DATA is not set)
 .plugin-data/
