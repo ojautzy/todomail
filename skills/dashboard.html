@@ -96,6 +96,15 @@
             return md;
         }
 
+        // Retro-compat lecture pending_emails.json : accepte v1 (tableau brut)
+        // et v2 (wrapper { "_meta": ..., "emails": [...] }). Renvoie toujours
+        // un tableau.
+        function extractEmails(data) {
+            if (Array.isArray(data)) return data;
+            if (data && Array.isArray(data.emails)) return data.emails;
+            return [];
+        }
+
         // Extract recipient display name from filename like "jean-martin_01.md"
         function recipientFromFilename(filename) {
             const base = filename.replace(/\.md$/, '');
@@ -162,7 +171,8 @@
                         const categoryDir = await todoDir.getDirectoryHandle(subdir.key);
                         const fileHandle = await categoryDir.getFileHandle('pending_emails.json');
                         const data = JSON.parse(await (await fileHandle.getFile()).text());
-                        newCounts[subdir.key] = data.length;
+                        const emails = extractEmails(data);
+                        newCounts[subdir.key] = emails.length;
                     } catch (err) {
                         newCounts[subdir.key] = 0;
                     }
@@ -203,26 +213,30 @@
                     const categoryDir = await todoDir.getDirectoryHandle(subdirKey);
                     const fileHandle = await categoryDir.getFileHandle('pending_emails.json');
                     const data = JSON.parse(await (await fileHandle.getFile()).text());
-                    setEmails(data);
+                    const emails = extractEmails(data);
+                    setEmails(emails);
                     setSearchTerm("");
                     setExpandedCard(null);
-                    setCounts(prev => ({ ...prev, [subdirKey]: data.length }));
+                    setCounts(prev => ({ ...prev, [subdirKey]: emails.length }));
 
                     const defAction = subdirKey === 'trash' ? 'delete' : 'other';
                     let loadedDecisions = {};
                     try {
                         const instrFile = await categoryDir.getFileHandle('instructions.json');
                         const instrData = JSON.parse(await (await instrFile.getFile()).text());
-                        if (Array.isArray(instrData) && instrData.length > 0) {
-                            instrData.forEach(instr => { loadedDecisions[instr.id] = instr.action; });
+                        const instrList = Array.isArray(instrData)
+                            ? instrData
+                            : (instrData && Array.isArray(instrData.instructions) ? instrData.instructions : []);
+                        if (instrList.length > 0) {
+                            instrList.forEach(instr => { loadedDecisions[instr.id] = instr.action; });
                         }
                     } catch (_) {}
-                    data.forEach(e => {
+                    emails.forEach(e => {
                         if (!loadedDecisions[e.id]) loadedDecisions[e.id] = defAction;
                     });
                     setDecisions(loadedDecisions);
-                    if (data.length > 0) {
-                        writeInstructions(handle, subdirKey, data, loadedDecisions);
+                    if (emails.length > 0) {
+                        writeInstructions(handle, subdirKey, emails, loadedDecisions);
                     }
                 } catch (err) {
                     setEmails([]);

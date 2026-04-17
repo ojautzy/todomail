@@ -66,7 +66,16 @@ Chaque sous-répertoire de `todo/` contient son propre `pending_emails.json` (en
 
 ### **A. pending\_emails.json (par catégorie)**
 
-Chaque fichier `pending_emails.json` est généré par Claude (étape 2 du skill `sort-mails`) et contient les champs communs `id`, `sender`, `date` plus des champs spécifiques à la catégorie :
+Chaque fichier `pending_emails.json` est généré par Claude (étape 3 du skill `sort-mails` v2.0.0) et contient les champs communs `id`, `sender`, `date` plus des champs spécifiques à la catégorie.
+
+**Deux formats coexistent** depuis la version 2.0.0-alpha.3 :
+
+- **v1 (legacy, jusqu'à la v1.4.1)** : tableau brut — `[ { ... }, { ... } ]`.
+- **v2 (alpha.3+)** : wrapper `{ "_meta": { "schema_version": 2, "session_id": "...", "generated_at": "..." }, "emails": [ ... ] }`.
+
+Le dashboard lit les deux formats de manière transparente (fonction `extractEmails(data)` qui renvoie toujours un tableau). Il continue à écrire le format v1 dans les `instructions.json`, la refonte complète du dashboard étant prévue en Phase 5 du refactoring v2.
+
+Les exemples ci-dessous présentent le contenu d'une entrée du tableau `emails` (v2) ou d'une entrée du tableau racine (v1) — les champs sont identiques :
 
 **trash :**
 ```json
@@ -158,6 +167,8 @@ Fichier généré et mis à jour automatiquement par le dashboard. Un fichier `i
 ```json
 [{ "id": "2026-02-18_13h24m00_1", "action": "other" }]
 ```
+
+**Formats supportés en lecture** (depuis 2.0.0-alpha.3) : v1 = tableau brut (comme ci-dessus), v2 = `{ "_meta": { ... }, "instructions": [ ... ] }`. Le dashboard écrit encore en v1 ; `process-todo` (Phase 3) produira du v2.
 
 Valeurs possibles pour la balise `action` :
 

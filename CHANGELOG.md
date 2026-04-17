@@ -45,6 +45,10 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 - `agents/mail-analyzer.md`.
 
+### Corrigé (hotfix post-merge)
+
+- **Dashboard — rétro-compatibilité de lecture v1/v2** : le dashboard lisait les `pending_emails.json` comme un tableau brut. Dès qu'un cycle alpha.3 écrit le format v2 (wrapper `{ "_meta": ..., "emails": [...] }`), `data.forEach` levait une TypeError et provoquait un écran blanc après sélection du répertoire. Ajout d'une fonction helper `extractEmails(data)` qui accepte les deux formats. Même traitement appliqué à la lecture des `instructions.json` (v1 = tableau, v2 = `{ "_meta": ..., "instructions": [...] }`). Correctif de lecture uniquement — le dashboard continue à écrire le format v1 (refonte complète en Phase 5). Après mise à jour du plugin, relancer `/todomail:start` dans le workspace pour rafraîchir le `dashboard.html` local.
+
 ---
 
 ## [2.0.0-alpha.2] - 2026-04-17
