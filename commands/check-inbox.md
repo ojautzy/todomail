@@ -1,107 +1,107 @@
 ---
-description: Telecharger et trier les mails de la boite de reception
+description: Télécharger et trier les mails de la boîte de réception
 allowed-tools: Read, Write, Bash(mkdir:*), Bash(mv:*), Bash(ls:*), Bash(python3:*), Bash(pip:*), Glob, Grep, Task, mcp
 argument-hint: "[--strict] [--retry]"
 ---
 
 ## Parsing des arguments
 
-Les arguments passes a la commande sont disponibles dans la variable `$ARGUMENTS`.
-Le parsing est effectue en lisant semantiquement cette variable (pas de parseur
+Les arguments passés à la commande sont disponibles dans la variable `$ARGUMENTS`.
+Le parsing est effectué en lisant sémantiquement cette variable (pas de parseur
 externe).
 
-Flags supportes :
-- `--strict` : active le mode strict (`ErrorHandler(mode="strict")`) — arret
-  immediat a la premiere erreur avec demande utilisateur.
-- `--retry` : **saute le telechargement IMAP**, lit `lib.state.get_pending_errors()`
+Flags supportés :
+- `--strict` : active le mode strict (`ErrorHandler(mode="strict")`) — arrêt
+  immédiat à la première erreur avec demande utilisateur.
+- `--retry` : **saute le téléchargement IMAP**, lit `lib.state.get_pending_errors()`
   et retraite uniquement les mails inscrits dans `state.errors[]`. Le mode reste
   `lenient` quelle que soit la combinaison de flags.
 
-Regle de priorite :
-1. Si `$ARGUMENTS` contient `--retry` → mode retry (Etape 1 sautee, analyse ciblee
-   sur les mails en echec, chaque retry reussi retire l'entree via
+Règle de priorité :
+1. Si `$ARGUMENTS` contient `--retry` → mode retry (Étape 1 sautée, analyse ciblée
+   sur les mails en échec, chaque retry réussi retire l'entrée via
    `lib.state.clear_error(mail_id)`).
 2. Sinon si `$ARGUMENTS` contient `--strict` → `ErrorHandler(mode="strict")`,
    cycle complet.
-3. Sinon → mode par defaut (`lenient`, cycle complet).
+3. Sinon → mode par défaut (`lenient`, cycle complet).
 
-## Verification prealable
+## Vérification préalable
 
-### 1. Repertoires
+### 1. Répertoires
 
-Verifier que le repertoire de travail contient `inbox/`. Absence → **ARRET
-OBLIGATOIRE — Repertoire inadequat** (message clair, attendre).
+Vérifier que le répertoire de travail contient `inbox/`. Absence → **ARRÊT
+OBLIGATOIRE — Répertoire inadéquat** (message clair, attendre).
 
-### 2. Serveur MCP (desambiguation alpha.2 — **ne jamais supprimer**)
+### 2. Serveur MCP (désambiguation alpha.2 — **ne jamais supprimer**)
 
-Lire `.todomail-config.json` a la racine du repertoire de travail. Appeler le
+Lire `.todomail-config.json` à la racine du répertoire de travail. Appeler le
 tool MCP `status` et comparer `status.rag_name` avec `expected_rag_name` du
 fichier de config.
 
-- Si `.todomail-config.json` n'existe pas : demander a l'utilisateur de lancer
-  `/todomail:start` pour configurer le workspace, puis arreter.
+- Si `.todomail-config.json` n'existe pas : demander à l'utilisateur de lancer
+  `/todomail:start` pour configurer le workspace, puis arrêter.
 - Si `status.rag_name != expected_rag_name` :
 
-> **ARRET OBLIGATOIRE — Mauvais serveur MCP**
-> Afficher : « Le serveur MCP connecte (`<status.rag_name>`) ne correspond pas
-> au serveur attendu pour ce workspace (`<expected_rag_name>`). Verifier les
+> **ARRÊT OBLIGATOIRE — Mauvais serveur MCP**
+> Afficher : « Le serveur MCP connecté (`<status.rag_name>`) ne correspond pas
+> au serveur attendu pour ce workspace (`<expected_rag_name>`). Vérifier les
 > connexions MCP dans Claude Desktop ou relancer `/todomail:start` pour
 > reconfigurer. »
 
-Cette verification est **obligatoire** et s'execute **avant** toute autre etape.
+Cette vérification est **obligatoire** et s'exécute **avant** toute autre étape.
 Elle couvre tous les composants en aval (sort-mails, analyse, etc.), qui n'ont
-donc pas a la refaire.
+donc pas à la refaire.
 
-## Etape 1 — Telechargement des mails (sautee si `--retry`)
+## Étape 1 — Téléchargement des mails (sautée si `--retry`)
 
-Appeler le tool MCP `check_inbox` pour telecharger les mails depuis le serveur
-IMAP. Chaque mail est place dans un sous-repertoire de `inbox/` dont le nom est
-l'horodate du mail. Le sous-repertoire contient :
+Appeler le tool MCP `check_inbox` pour télécharger les mails depuis le serveur
+IMAP. Chaque mail est placé dans un sous-répertoire de `inbox/` dont le nom est
+l'horodate du mail. Le sous-répertoire contient :
 - le mail au format EML
-- un `message.json` (metadonnees + corps)
-- chaque piece jointe
+- un `message.json` (métadonnées + corps)
+- chaque pièce jointe
 
-**Important** : le tool s'execute en tache de fond. Attendre la fin avant de
-passer a l'etape suivante.
+**Important** : le tool s'exécute en tâche de fond. Attendre la fin avant de
+passer à l'étape suivante.
 
-## Etape 2 — Tri des mails (skill sort-mails)
+## Étape 2 — Tri des mails (skill sort-mails)
 
-Lire `@${CLAUDE_PLUGIN_ROOT}/skills/sort-mails/SKILL.md` et suivre ses etapes.
+Lire `@${CLAUDE_PLUGIN_ROOT}/skills/sort-mails/SKILL.md` et suivre ses étapes.
 
 **Transmission des flags** : transmettre le mode d'erreur (`lenient` / `strict`)
-au skill via l'`ErrorHandler` deja instancie dans l'environnement de session.
+au skill via l'`ErrorHandler` déjà instancié dans l'environnement de session.
 
-**Mode `--retry`** : au lieu de lister `inbox/`, lister les `mail_id` retournes
+**Mode `--retry`** : au lieu de lister `inbox/`, lister les `mail_id` retournés
 par `lib.state.get_pending_errors()`. Pour chaque `mail_id`, localiser son
-repertoire source (dans `inbox/` ou deja dans `todo/<categorie>/` selon ou il
-est reste) et relancer uniquement l'Etape 2 de sort-mails sur ce mail. A chaque
-retry reussi : `lib.state.clear_error(mail_id)`. Les `pending_emails.json` sont
-re-fusionnes en consequence.
+répertoire source (dans `inbox/` ou déjà dans `todo/<catégorie>/` selon où il
+est resté) et relancer uniquement l'Étape 2 de sort-mails sur ce mail. À chaque
+retry réussi : `lib.state.clear_error(mail_id)`. Les `pending_emails.json` sont
+re-fusionnés en conséquence.
 
-## Etape 3 — Compte-rendu
+## Étape 3 — Compte-rendu
 
 ### Statistiques
 
-- Nombre total de mails telecharges (cycle complet) **ou** nombre de mails
-  retraites (`--retry`).
-- Stats pre-filtrage Haiku et cache RAG (heritees du skill sort-mails).
-- Repartition par categorie.
+- Nombre total de mails téléchargés (cycle complet) **ou** nombre de mails
+  retraités (`--retry`).
+- Stats pré-filtrage Haiku et cache RAG (héritées du skill sort-mails).
+- Répartition par catégorie.
 
-### Erreurs eventuelles
+### Erreurs éventuelles
 
 Lister les erreurs persistantes de `state.errors[]` avec, pour chacune :
 `mail_id`, `phase`, `error_type`, `retry_count`, `permanent_failure`.
 
-Si au moins une erreur est non resolue :
+Si au moins une erreur est non résolue :
 
 > Relancer `/todomail:check-inbox --retry` pour retraiter uniquement les mails
-> en echec.
+> en échec.
 
-### Acces au dashboard
+### Accès au dashboard
 
-Indiquer a l'utilisateur qu'il peut ouvrir le dashboard interactif dans son
+Indiquer à l'utilisateur qu'il peut ouvrir le dashboard interactif dans son
 navigateur :
 
 ```
-file://<chemin_absolu_du_repertoire_de_travail>/dashboard.html
+file://<chemin_absolu_du_répertoire_de_travail>/dashboard.html
 ```

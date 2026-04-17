@@ -8,76 +8,76 @@ allowed-tools: Read, Write, Bash(mkdir:*), Bash(mv:*), Bash(ls:*), Bash(python3:
 version: 2.0.0
 ---
 
-# sort-mails — Tri des mails (Opus 1M, pre-filtrage Haiku, cache RAG)
+# sort-mails — Tri des mails (Opus 1M, pré-filtrage Haiku, cache RAG)
 
-Trie `inbox/` dans les 7 categories de `todo/`. Exploite le contexte 1M d'Opus
-pour analyser les mails en flux (pas d'agent par mail), avec pre-filtrage Haiku
-sur les evidences et cache RAG pour eviter les appels MCP redondants.
+Trie `inbox/` dans les 7 catégories de `todo/`. Exploite le contexte 1M d'Opus
+pour analyser les mails en flux (pas d'agent par mail), avec pré-filtrage Haiku
+sur les évidences et cache RAG pour éviter les appels MCP redondants.
 
-## Verification prealable des repertoires
+## Vérification préalable des répertoires
 
-Verifier la presence de `inbox/`, `todo/`, `to-clean-by-user/` et des 7 sous-dossiers
+Vérifier la présence de `inbox/`, `todo/`, `to-clean-by-user/` et des 7 sous-dossiers
 de `todo/` (`trash`, `do-read-quick`, `do-read-long`, `do-decide`,
 `do-consult-and-decide`, `do-other`, `do-self`). En cas d'absence :
 
-> **ARRET OBLIGATOIRE — Repertoire inadequat**
-> Lister les repertoires manquants et demander a l'utilisateur de corriger.
+> **ARRÊT OBLIGATOIRE — Répertoire inadéquat**
+> Lister les répertoires manquants et demander à l'utilisateur de corriger.
 
-La verification du serveur MCP (alpha.2) est assuree par `/check-inbox` en amont.
+La vérification du serveur MCP (alpha.2) est assurée par `/check-inbox` en amont.
 
-## Etape 0 — Warm-up
+## Étape 0 — Warm-up
 
-1. `Read` de `CLAUDE.md` et de `memory/*` en memoire de session.
+1. `Read` de `CLAUDE.md` et de `memory/*` en mémoire de session.
 2. Instancier `RagCache` depuis `lib.rag_cache`.
 3. `load_state()` depuis `lib.state` ; si `errors[]` non vide, signaler la reprise
    possible via `--retry`.
-4. `acquire_lock("sort-mails")`. Si deja locke :
-   > **ARRET OBLIGATOIRE — Verrou actif**. Demander si attente ou deverrouillage.
+4. `acquire_lock("sort-mails")`. Si déjà verrouillé :
+   > **ARRÊT OBLIGATOIRE — Verrou actif**. Demander si attente ou déverrouillage.
 5. Initialiser `ErrorHandler(mode="lenient")` (ou `"strict"` si flag).
 
-## Etape 1 — Listage et pre-filtrage Haiku
+## Étape 1 — Listage et pré-filtrage Haiku
 
-Lister les sous-repertoires de `inbox/`. Si vide, passer a l'Etape 4.
+Lister les sous-répertoires de `inbox/`. Si vide, passer à l'Étape 4.
 
-Pour chaque sous-repertoire contenant deja un `_analysis.json` (reprise apres
-interruption), reutiliser le fichier tel quel : passer directement a l'Etape 3.
+Pour chaque sous-répertoire contenant déjà un `_analysis.json` (reprise après
+interruption), réutiliser le fichier tel quel : passer directement à l'Étape 3.
 
 **Court-circuit petits volumes** : si le nombre de mails restants `<= 5`, sauter
-le pre-filtrage, tout passe a l'Etape 2.
+le pré-filtrage, tout passe à l'Étape 2.
 
 ### Construction du batch
 
 Pour chaque mail restant, lire `message.json` et extraire uniquement : `id`,
 `from`, `from_name`, `subject`, `date`, `size_bytes`, `has_attachments`,
-`attachment_count`, et les 200 premiers caracteres du `body_text` (`body_preview`).
+`attachment_count`, et les 200 premiers caractères du `body_text` (`body_preview`).
 **Ne pas charger le corps complet.**
 
 ### Appel de l'agent `mail-prefilter`
 
 Lancer un **unique** `Task` avec `subagent_type: "mail-prefilter"` sur tout le
-batch, avec pour prompt le JSON `{ "mails": [...] }` decrit dans
+batch, avec pour prompt le JSON `{ "mails": [...] }` décrit dans
 `agents/mail-prefilter.md`. Parser la sortie.
 
 Pour chaque verdict :
 
-- `trash` → `safe_mv(inbox/id, todo/trash/id)`, entree minimale `{id, sender, date, summary: reason}`.
-- `do-read-quick` → idem vers `todo/do-read-quick/`, entree `{id, sender, date, synth: reason}`.
-- `unsure` → rester dans `inbox/`, passer a l'Etape 2.
+- `trash` → `safe_mv(inbox/id, todo/trash/id)`, entrée minimale `{id, sender, date, summary: reason}`.
+- `do-read-quick` → idem vers `todo/do-read-quick/`, entrée `{id, sender, date, synth: reason}`.
+- `unsure` → rester dans `inbox/`, passer à l'Étape 2.
 
 Utiliser `lib.fs_utils.safe_mv` + `is_already_in_destination` pour l'idempotence.
 
 Checkpoint : `update_checkpoint("sort-mails:prefilter", "ok", {"trash": n, "quick": n, "unsure": n})`.
 
-## Etape 2 — Analyse principale (Opus 1M)
+## Étape 2 — Analyse principale (Opus 1M)
 
 Pour chaque mail restant dans `inbox/`, Claude lit **dans son contexte principal** :
 
-1. `message.json` complet (metadonnees + corps).
-2. Toutes les pieces jointes selon la table ci-dessous.
+1. `message.json` complet (métadonnées + corps).
+2. Toutes les pièces jointes selon la table ci-dessous.
 
-### Table de lecture des pieces jointes
+### Table de lecture des pièces jointes
 
-| Format | Methode |
+| Format | Méthode |
 |--------|---------|
 | `.txt`, `.md`, `.html`, `.csv`, `.json`, `.ics` | `Read` natif |
 | `.pdf` | `Read` natif (multimodal) |
@@ -87,9 +87,9 @@ Pour chaque mail restant dans `inbox/`, Claude lit **dans son contexte principal
 | Autres binaires | Ne pas lire. Noter « non lisible : [nom] ». |
 
 Installer `markitdown` si absent : `pip install markitdown --break-system-packages`
-(meme pattern qu'`odfpy`).
+(même pattern qu'`odfpy`).
 
-> **ANTI-HALLUCINATION** : ne produire aucune synthese sans avoir lu la source.
+> **ANTI-HALLUCINATION** : ne produire aucune synthèse sans avoir lu la source.
 
 ### Contextualisation RAG (cache obligatoire)
 
@@ -104,15 +104,15 @@ else:
     result = hit
 ```
 
-Appels types par mail : expediteur (nom + email), sujet/dossier si identifiable.
+Appels types par mail : expéditeur (nom + email), sujet/dossier si identifiable.
 Remplir le champ `rag-context`. Si rien de pertinent → `null` (pas de
-rapprochement force).
+rapprochement forcé).
 
-### Detection agenda
+### Détection agenda
 
 Si le mail implique l'agenda (demande RDV, invitation, changement, annulation,
-proposition creneau, rappel), appeler `get_availability` et `fetch_calendar_events`
-(cache RAG idem) sur la periode concernee. Produire :
+proposition créneau, rappel), appeler `get_availability` et `fetch_calendar_events`
+(cache RAG idem) sur la période concernée. Produire :
 
 ```json
 {
@@ -121,7 +121,7 @@ proposition creneau, rappel), appeler `get_availability` et `fetch_calendar_even
   "disponibilite": "disponible|conflit|possiblement libre",
   "conflit-detail": "...",
   "creneaux-alternatifs": ["2026-04-20 10:00 - 11:00"],
-  "coherence": "coherent|description des ecarts"
+  "coherence": "cohérent|description des écarts"
 }
 ```
 
@@ -129,17 +129,17 @@ Sinon : `agenda-detected: false`, `agenda-info: null`.
 
 ### Classification
 
-| Categorie | Criteres |
+| Catégorie | Critères |
 |-----------|----------|
-| `trash` | Spam, newsletter, notification systeme sans valeur |
+| `trash` | Spam, newsletter, notification système sans valeur |
 | `do-read-quick` | Info simple sans PJ significative, aucune action |
-| `do-read-long` | PJ a lire, pas d'arbitrage |
-| `do-decide` | Decision tranchable seul |
-| `do-consult-and-decide` | Decision necessitant consultation (transversal) |
-| `do-other` | Production demandee a un service |
+| `do-read-long` | PJ à lire, pas d'arbitrage |
+| `do-decide` | Décision tranchable seul |
+| `do-consult-and-decide` | Décision nécessitant consultation (transversal) |
+| `do-other` | Production demandée à un service |
 | `do-self` | Production personnelle de l'utilisateur |
 
-### Syntheses (tous les champs, quelle que soit la categorie)
+### Synthèses (tous les champs, quelle que soit la catégorie)
 
 | Champ | Taille cible |
 |-------|-------------|
@@ -149,9 +149,9 @@ Sinon : `agenda-detected: false`, `agenda-info: null`.
 | `choose-points` | si applicable |
 | `transmit` | si applicable |
 
-### Ecriture du `_analysis.json` (artefact de reprise)
+### Écriture du `_analysis.json` (artefact de reprise)
 
-Pour **chaque mail analyse**, ecrire dans son repertoire via
+Pour **chaque mail analysé**, écrire dans son répertoire via
 `lib.fs_utils.atomic_write_json` :
 
 ```json
@@ -168,24 +168,24 @@ Pour **chaque mail analyse**, ecrire dans son repertoire via
 }
 ```
 
-Ce fichier est reutilise en cas d'interruption (cf. Etape 1).
+Ce fichier est réutilisé en cas d'interruption (cf. Étape 1).
 
 ### Batching adaptatif
 
-Si `> 30` mails a analyser, traiter par **batches de 10 a 15** : analyser le batch,
-ecrire ses `_analysis.json`, `update_checkpoint("sort-mails:analyze-batch-N", "ok")`,
+Si `> 30` mails à analyser, traiter par **batches de 10 à 15** : analyser le batch,
+écrire ses `_analysis.json`, `update_checkpoint("sort-mails:analyze-batch-N", "ok")`,
 puis batch suivant. Permet la reprise granulaire.
 
 ### Gestion d'erreur
 
-Chaque echec (lecture PJ, timeout MCP, parsing) passe par
+Chaque échec (lecture PJ, timeout MCP, parsing) passe par
 `ErrorHandler.handle(exc, {"mail_id": id, "phase": "sort-mails:analyze"})` :
 
-- `lenient` : erreur enregistree dans `state.errors[]`, mail reste dans `inbox/`,
+- `lenient` : erreur enregistrée dans `state.errors[]`, mail reste dans `inbox/`,
   on continue.
-- `strict` : STOP immediat, demande utilisateur.
+- `strict` : STOP immédiat, demande utilisateur.
 
-## Etape 3 — Tri et ecriture des `pending_emails.json` v2
+## Étape 3 — Tri et écriture des `pending_emails.json` v2
 
 Pour chaque mail ayant un `_analysis.json` :
 
@@ -193,11 +193,11 @@ Pour chaque mail ayant un `_analysis.json` :
 2. Si `is_already_in_destination(id, f"todo/{category}/")` → skip.
 3. Sinon `safe_mv(f"inbox/{id}", f"todo/{category}/{id}")`.
 
-### Construction des entrees par categorie
+### Construction des entrées par catégorie
 
-Au-dela des champs communs `id`, `sender`, `date` :
+Au-delà des champs communs `id`, `sender`, `date` :
 
-| Categorie | Champs additionnels (source) |
+| Catégorie | Champs additionnels (source) |
 |-----------|------------------------------|
 | `trash` | `summary` |
 | `do-read-quick` | `synth` |
@@ -207,11 +207,11 @@ Au-dela des champs communs `id`, `sender`, `date` :
 | `do-other` | `synth`, `transmit` |
 | `do-self` | `synth` (depuis `detailed-synth`) |
 
-Si `agenda-detected == true` → ajouter `agenda-info` a l'entree.
+Si `agenda-detected == true` → ajouter `agenda-info` à l'entrée.
 
-### Ecriture fusionnee (pas de purge inconditionnelle)
+### Écriture fusionnée (pas de purge inconditionnelle)
 
-Pour chaque categorie contenant de nouveaux mails :
+Pour chaque catégorie contenant de nouveaux mails :
 
 ```python
 existing = read_pending_emails(category_dir)  # lit v1 et v2
@@ -223,7 +223,7 @@ write_pending_emails(category_dir, merged, session_id)
 
 Checkpoint : `update_checkpoint("sort-mails:write", "ok", {"categories": {...}})`.
 
-## Etape 4 — Finalisation `state.json`
+## Étape 4 — Finalisation `state.json`
 
 ```python
 update_checkpoint("sort-mails:done", "ok", {"stats": {...}})
@@ -231,17 +231,17 @@ release_lock()
 rag_cache.clear()
 ```
 
-## Etape 5 — Compte-rendu utilisateur
+## Étape 5 — Compte-rendu utilisateur
 
-- **Pre-filtrage** : « N mails recus, M pre-filtres en trash, K en do-read-quick,
-  L analyses en Opus ».
+- **Pré-filtrage** : « N mails reçus, M pré-filtrés en trash, K en do-read-quick,
+  L analysés en Opus ».
 - **Cache RAG** : `rag_cache.stats()` → hits / miss.
-- **Repartition** :
+- **Répartition** :
 
-  | Categorie | Mails |
+  | Catégorie | Mails |
   |-----------|-------|
   | trash / do-read-quick / do-read-long / do-decide / do-consult-and-decide / do-other / do-self | ... |
 
-- **Erreurs** : si `state.errors[]` non vide, lister et suggerer :
+- **Erreurs** : si `state.errors[]` non vide, lister et suggérer :
   > Relancer `/todomail:check-inbox --retry` pour retraiter uniquement les mails
-  > en echec.
+  > en échec.
