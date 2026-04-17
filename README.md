@@ -45,7 +45,12 @@ Principe : si Claude doit pouvoir utiliser une capacité de sa propre initiative
 | Agent | Description |
 |-------|-------------|
 | `mail-prefilter` | Pré-filtrage batch des mails évidents (newsletters, accusés de réception) à partir des seules métadonnées. Un unique appel Haiku 4.5 retourne un classement `trash` / `do-read-quick` / `unsure` pour chaque mail du batch. Utilisé par `sort-mails` avant l'analyse principale Opus 1M. |
-| `todo-processor` | Traitement d'un mail unique pour `process-todo` dans un contexte isolé. Trois modes : « autonomous » (traitement complet do-read-long), « analyze » (Phase 1 d'analyse et proposition pour les catégories interactives), « finalize » (Phase 2 d'archivage et finalisation après validation utilisateur). Produit un `_treatment.json` exploité par `process-todo`. |
+
+Depuis la Phase 3 du refactoring v2 (alpha.4), `process-todo` n'utilise plus
+d'agent dédié : la logique d'analyse, de validation et de finalisation est
+intégrée dans le contexte principal (Opus 4.6 1M). L'idempotence des opérations
+fichiers (via `lib/fs_utils.py`) et l'écriture d'un `_treatment.json` par mail
+permettent la reprise sur erreur via `/process-todo --retry`.
 
 ## Dashboard interactif
 
@@ -94,8 +99,7 @@ todomail/
 │   ├── briefing.md
 │   └── check-agenda.md
 ├── agents/
-│   ├── mail-prefilter.md
-│   └── todo-processor.md
+│   └── mail-prefilter.md
 ├── skills/
 │   ├── sort-mails/
 │   │   └── SKILL.md

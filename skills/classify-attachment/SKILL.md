@@ -4,16 +4,18 @@ description: >
   Classement des pièces jointes dans docs/ selon la structure
   canonique AURA/MIN. Garde-fou structurel empêchant la création
   de répertoires parasites hors de la hiérarchie docs/AURA/ et docs/MIN/.
-  Ce skill est un document de référence lu par l'agent todo-processor
-  lors du classement des pièces jointes (il n'est pas invoqué directement).
+  Ce skill est un document de référence lu par les commandes /process-todo
+  et /check-inbox lors du classement des pièces jointes (il n'est pas
+  invoqué directement).
 version: 1.0.0
 ---
 
 # Classement des pièces jointes
 
-Ce skill est un document de référence lu par l'agent `todo-processor`
-lors du classement des pièces jointes. L'agent lit ce fichier avec `Read`
-puis applique l'algorithme ci-dessous.
+Ce skill est un document de référence lu par la commande `/process-todo`
+(et par `/check-inbox` via `sort-mails`) lors du classement des pièces jointes.
+Le composant appelant lit ce fichier avec `Read` puis applique l'algorithme
+ci-dessous.
 
 ## Structure canonique de docs/
 
@@ -100,7 +102,7 @@ Référence pour l'étape 3 (fallback) :
 
 ## Format de stockage dans `_treatment.json`
 
-L'agent `todo-processor` doit écrire le résultat du classement dans le champ `analysis.attachments[]` de `_treatment.json` :
+La commande `/process-todo` écrit le résultat du classement dans le champ `analysis.attachments[]` de `_treatment.json` :
 
 ```json
 {
