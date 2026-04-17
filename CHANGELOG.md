@@ -7,6 +7,49 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.0.0-alpha.4] - 2026-04-17
+
+### ⚠️ BREAKING — Refactoring v2 Phase 3
+
+- Suppression de l'agent `todo-processor`. La logique d'analyse, de validation et de finalisation des mails est désormais intégrée dans le contexte principal (Opus 4.6 1M) de la commande `/process-todo`. Plus de fan-out `Task` par mail, plus de passage `_treatment.json` entre deux contextes.
+
+### Ajouté
+
+- Flags `--strict`, `--retry` et `--batch-validate` sur `/process-todo` (parsing sémantique via `$ARGUMENTS`, pattern hérité de `/check-inbox` alpha.3) :
+  - `--strict` : arrêt à la première erreur avec demande utilisateur.
+  - `--retry` : saute les Étapes 1-2 et retraite uniquement les mails inscrits dans `state.errors[]`, chaque entrée étant retirée après succès.
+  - `--batch-validate` : **opt-in uniquement, jamais automatique**. Présente toutes les propositions interactives en un seul rendu avec validation en lot (`OUI tous` / `NON tous` / `OUI sauf 3,7,12`). Les mails refusés repassent en mode séquentiel.
+- Idempotence systématique des opérations fichiers via `lib/fs_utils.py` (`safe_mv`, `safe_rm`, `atomic_write_json`, `write_pending_emails`, `write_instructions`). Toute étape peut être rejouée sans effet de bord.
+- Reprise sur erreur granulaire : `_treatment.json` écrit à chaque phase (`analyze`, `finalize`, `autonomous`) **avant** tout déplacement final, servant d'artefact de reprise si la session meurt entre deux phases.
+- Vérification de fraîcheur des `instructions.json` : si `_meta.consumes_session_id` ne correspond pas au `session_id` courant, demande de confirmation (`AskUserQuestion`) avant traitement. Empêche de rejouer aveuglément un `instructions.json` périmé.
+- Cache RAG obligatoire pour tous les appels MCP (`search_mail`/`search_doc`/`search_all`/`get_availability`/`fetch_calendar_events`) via `lib/rag_cache.py` — pas d'exception.
+- Verrou `process-todo` sur `state.json.active_lock` : arrêt propre si un autre cycle est déjà en cours.
+- Signal `dashboard_invalidate.txt` touché en fin de cycle (préparatoire à la Phase 5 ; sans effet visible avant).
+
+### Modifié
+
+- `commands/process-todo.md` : réécrit en 350 lignes (vs 403 précédemment) avec 6 étapes (warm-up, collecte instructions, actions simples, actions `other` complexes, cohérence, finalisation). Vérification préalable MCP (alpha.2) préservée en tête.
+- `skills/classify-attachment/SKILL.md` : références à `todo-processor` remplacées par `/process-todo` (le skill reste un document de référence lu par la commande).
+- `skills/memory-management/SKILL.md` : section `process-todo` réécrite pour refléter le traitement en flux dans le contexte principal (plus d'agent intermédiaire).
+- `README.md` : table des agents simplifiée (seul `mail-prefilter` subsiste), arborescence mise à jour, note sur la suppression de `todo-processor`.
+- `CONNECTORS.md` : colonne `todo-processor` retirée du tableau d'utilisation ; les appels MCP de `process-todo` passent de `(i)` à direct. Nouvelle entrée documentant la refonte alpha.4.
+- `CLAUDE.md` : arborescence des agents mise à jour.
+
+### Comportement par défaut conservé
+
+- **Validation séquentielle** (un mail à la fois avec ARRÊT OBLIGATOIRE par mail) reste le mode par défaut, identique à l'expérience v1.x.
+- Vérification préalable MCP (alpha.2) intacte en première étape.
+- `_deferred.json` : file d'attente persistante entre Étape 2 (déplacement inter-catégories) et Étape 3 (traitement `other`), évite un aller-retour dashboard.
+- Pré-allocation des numéros `to-send/` (via `max(NN)+1` sur `ls`) conservée pour cohérence, même sans parallélisme.
+- Règles anti-hallucination (lecture effective obligatoire, chemins PJ obligatoirement sous `docs/AURA/` ou `docs/MIN/`) préservées et affichées en bloc visible.
+- Rétro-compatibilité lecture des `instructions.json` v1 (tableau brut produit par le dashboard actuel) maintenue via `lib.fs_utils.read_v2_json`. Le dashboard continue à fonctionner sans modification (hotfix post-alpha.3 toujours en place).
+
+### Supprimé
+
+- `agents/todo-processor.md`.
+
+---
+
 ## [2.0.0-alpha.3] - 2026-04-17
 
 ### ⚠️ BREAKING — Refactoring v2 Phase 2

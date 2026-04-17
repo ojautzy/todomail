@@ -8,7 +8,7 @@ Plugin Claude Code : skills, agents et commandes pour le traitement des emails e
 todomail/
 ├── .claude-plugin/plugin.json   ← manifeste du plugin (source de vérité pour la version)
 ├── commands/*.md                ← commandes utilisateur (/start, /check-inbox, etc.)
-├── agents/*.md                  ← agents autonomes (mail-prefilter, todo-processor)
+├── agents/*.md                  ← agents autonomes (mail-prefilter)
 ├── skills/*/SKILL.md            ← skills (sort-mails, agenda, etc.)
 ├── CHANGELOG.md                 ← historique des versions
 ├── CONNECTORS.md                ← documentation des connecteurs MCP
