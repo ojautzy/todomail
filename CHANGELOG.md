@@ -7,6 +7,46 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.0.0-alpha.3] - 2026-04-17
+
+### ⚠️ BREAKING — Refactoring v2 Phase 2
+
+- Suppression de l'agent `mail-analyzer`. Sa logique est désormais intégrée directement dans le skill `sort-mails` qui exploite le contexte 1M d'Opus 4.6 et traite les mails en flux (plus d'isolation systématique par agent).
+- Format `pending_emails.json` v2 produit pour la première fois : objet wrapper `{ "_meta": {...}, "emails": [...] }` via `lib/fs_utils.write_pending_emails`. La lecture reste rétro-compatible (les anciens fichiers `[]` sont encore lus grâce à `read_v2_json`).
+- La fusion remplace la purge inconditionnelle : les entrées existantes des `pending_emails.json` sont conservées et dédoublonnées par `id` au lieu d'être écrasées.
+
+### Ajouté
+
+- Agent `mail-prefilter` (Haiku 4.5) : un seul appel batch sur les métadonnées de tous les mails de `inbox/` retourne un pré-classement `trash` / `do-read-quick` / `unsure`. Court-circuit en-dessous de 5 mails.
+- Cache RAG en mémoire de session via `lib/rag_cache.py` : `sort-mails` mémoïse les appels `search_mail` / `search_doc` / `search_all` / `get_availability` / `fetch_calendar_events` pour éviter les redondances.
+- Flags `--strict` et `--retry` sur `/check-inbox` (parsing sémantique via `$ARGUMENTS`) :
+  - `--strict` : arrêt immédiat à la première erreur avec demande utilisateur.
+  - `--retry` : saute le téléchargement IMAP et retraite uniquement les mails inscrits dans `state.errors[]`, en retirant chaque entrée après retry réussi.
+- Artefacts de reprise : chaque mail analysé produit un `_analysis.json` dans son répertoire, réutilisé tel quel si un cycle est interrompu (idempotence granulaire).
+- Table de lecture des pièces jointes unifiée via `markitdown` (Microsoft) pour `.docx`, `.xlsx`, `.pptx`, `.rtf`, `.epub`. Remplace les appels spécifiques à `python-docx` et `openpyxl`. ODF reste couvert par le skill `read-odf` interne.
+- Batching adaptatif : au-delà de 30 mails, l'analyse est fractionnée en batches de 10 à 15 avec checkpoints intermédiaires pour permettre la reprise granulaire.
+- Verrou `sort-mails` sur `state.json.active_lock` : arrêt propre si un autre cycle est déjà en cours.
+
+### Modifié
+
+- `skills/sort-mails/SKILL.md` : réécrit en version 2.0.0 (≤250 lignes) avec 6 étapes (warm-up, pré-filtrage, analyse Opus 1M, tri+écriture v2, finalisation `state.json`, compte-rendu). La vérification du serveur MCP n'est plus dupliquée dans le skill ; elle est assurée une seule fois par `/check-inbox` en amont.
+- `commands/check-inbox.md` : frontmatter enrichi (`argument-hint`), transmission des flags au skill, section « Verification préalable » alpha.2 préservée en tête.
+- `README.md` : table des agents mise à jour (remplacement de `mail-analyzer` par `mail-prefilter`), section « Cycle de vie des pending_emails.json » réécrite, ajout de `markitdown` aux dépendances.
+- `CONNECTORS.md` : colonne `mail-analyzer` retirée du tableau d'utilisation ; les appels MCP de `sort-mails` passent de `(i)` à direct. Section « Désambiguation multi-serveurs » (alpha.2) préservée telle quelle.
+- `skills/agenda`, `disponibilites`, `detection-conflits`, `memory-management`, `read-odf` : références à `mail-analyzer` remplacées par `sort-mails`.
+
+### Optimisé
+
+- Suppression du fan-out systématique d'agents à l'analyse : un seul contexte Opus 1M traite jusqu'à ~30 mails sans saturation, les volumes supérieurs sont fractionnés en batches.
+- Réduction des appels MCP redondants grâce au cache RAG (typiquement -50% sur un cycle).
+- Pré-filtrage Haiku : les newsletters et accusés de réception évidents ne mobilisent plus le contexte Opus.
+
+### Supprimé
+
+- `agents/mail-analyzer.md`.
+
+---
+
 ## [2.0.0-alpha.2] - 2026-04-17
 
 ### Supprime

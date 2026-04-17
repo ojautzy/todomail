@@ -27,7 +27,7 @@ Ce skill est déclenché :
 - **Par l'utilisateur** : "je suis libre quand la semaine prochaine ?",
   "quand est-ce que je pourrais caser une réunion avec X ?", "est-ce
   que j'ai le temps de faire Y aujourd'hui ?"
-- **Par l'agent `mail-analyzer`** : effectue directement les appels
+- **Par le skill `sort-mails`** : effectue directement les appels
   MCP `get_availability` pour vérifier les disponibilités quand un
   mail demande un rendez-vous ou propose un créneau (sans passer par
   ce skill)
@@ -142,7 +142,7 @@ Quand ce skill est appelé par un autre composant, il retourne :
 - **skill `agenda`** : fournit le contexte des événements entourant
   les créneaux libres (lieux, participants) pour le calcul des
   buffers de déplacement
-- **agent `mail-analyzer`** : effectue directement les appels MCP
+- **skill `sort-mails`** : effectue directement les appels MCP
   `get_availability` pour vérifier les disponibilités quand un mail
   propose un créneau de rendez-vous, sans passer par ce skill
 - **commande `/check-agenda`** : utilise ce skill pour proposer

@@ -44,7 +44,7 @@ Principe : si Claude doit pouvoir utiliser une capacité de sa propre initiative
 
 | Agent | Description |
 |-------|-------------|
-| `mail-analyzer` | Analyse exhaustive d'un mail unique dans un contexte isolé : lecture du mail et des PJ, contextualisation RAG, classification, détection agenda avec vérification de disponibilité, production de synthèses multi-niveaux. Produit un `_analysis.json` exploité par `sort-mails`. |
+| `mail-prefilter` | Pré-filtrage batch des mails évidents (newsletters, accusés de réception) à partir des seules métadonnées. Un unique appel Haiku 4.5 retourne un classement `trash` / `do-read-quick` / `unsure` pour chaque mail du batch. Utilisé par `sort-mails` avant l'analyse principale Opus 1M. |
 | `todo-processor` | Traitement d'un mail unique pour `process-todo` dans un contexte isolé. Trois modes : « autonomous » (traitement complet do-read-long), « analyze » (Phase 1 d'analyse et proposition pour les catégories interactives), « finalize » (Phase 2 d'archivage et finalisation après validation utilisateur). Produit un `_treatment.json` exploité par `process-todo`. |
 
 ## Dashboard interactif
@@ -94,7 +94,7 @@ todomail/
 │   ├── briefing.md
 │   └── check-agenda.md
 ├── agents/
-│   ├── mail-analyzer.md
+│   ├── mail-prefilter.md
 │   └── todo-processor.md
 ├── skills/
 │   ├── sort-mails/
@@ -180,7 +180,7 @@ Fournit la gestion IMAP (téléchargement, indexation des mails), l'indexation e
 
 Les fichiers `pending_emails.json` servent d'interface entre Claude et le dashboard. Leur cycle de vie suit des règles strictes pour éviter la persistance de données périmées :
 
-1. **Génération (`sort-mails` v1.0.0+)** — L'agent `mail-analyzer` est lancé en parallèle sur chaque mail et produit un `_analysis.json` par mail. Le skill `sort-mails` exploite ensuite ces fichiers pour trier les mails et générer les `pending_emails.json`. Avant de générer les nouveaux fichiers, le skill écrase systématiquement les 7 fichiers `pending_emails.json` avec un tableau vide `[]`. Ensuite, seuls les sous-répertoires contenant effectivement des mails sont peuplés. Si aucun nouveau mail n'a été trié (inbox vide), la purge et la régénération sont ignorées pour préserver les synthèses existantes. Les mails liés à l'agenda sont enrichis d'un champ optionnel `agenda-info` contenant les informations de disponibilité et de conflits.
+1. **Génération (`sort-mails` v2.0.0+)** — Le skill `sort-mails` traite les mails en flux dans le contexte principal Opus 1M, avec un pré-filtrage préalable par l'agent `mail-prefilter` (Haiku 4.5, batch unique sur les métadonnées) pour écarter rapidement les évidences (newsletters, accusés). Les mails restants sont analysés par Claude lui-même (lecture du corps et des PJ, classification, détection agenda, contextualisation RAG mémoïsée via `lib/rag_cache.py`). Un `_analysis.json` est écrit par mail dans son répertoire (artefact de reprise en cas d'interruption). Les `pending_emails.json` v2 (wrapper `_meta` + `emails`) sont ensuite générés par fusion : les entrées existantes sont conservées et dédoublonnées par `id`, pas de purge inconditionnelle. Les mails liés à l'agenda sont enrichis d'un champ optionnel `agenda-info` contenant les informations de disponibilité et de conflits.
 
 2. **Mise à jour incrémentale (`process-todo` v0.27.0+)** — Chaque action exécutée (suppression, déplacement, archivage, traitement complexe) retire immédiatement l'entrée correspondante du `pending_emails.json` de la catégorie source. Lors d'un déplacement inter-catégories, une nouvelle entrée est ajoutée dans le `pending_emails.json` de la catégorie destination (y compris le champ `agenda-info` s'il était présent dans l'entrée source). Depuis la v0.30.0, les mails déplacés sont ensuite automatiquement traités comme une action `other` dans leur catégorie de destination, ce qui retire l'entrée ajoutée lors de la finalisation du traitement. Un tableau vide `[]` est fonctionnellement équivalent à l'absence de fichier pour le dashboard.
 
@@ -188,7 +188,8 @@ Les fichiers `pending_emails.json` servent d'interface entre Claude et le dashbo
 
 ## Dépendances
 
-- `odfpy` (Python) — pour la lecture directe des fichiers OpenDocument par Claude (`pip install odfpy`)
+- `markitdown` (Python, Microsoft) — conversion unifiée des pièces jointes bureautiques (`.docx`, `.xlsx`, `.pptx`, `.rtf`, `.epub`) en Markdown (`pip install markitdown --break-system-packages`)
+- `odfpy` (Python) — pour la lecture directe des fichiers OpenDocument par Claude (`pip install odfpy --break-system-packages`)
 
 ## Compatibilite
 

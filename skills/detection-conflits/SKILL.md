@@ -29,7 +29,7 @@ Ce skill est déclenché :
   agenda est cohérent ?"
 - **Par le skill `agenda`** : systématiquement, lors de la
   construction du programme d'une journée ou d'une période
-- **Par l'agent `mail-analyzer`** : effectue directement les
+- **Par le skill `sort-mails`** : effectue directement les
   vérifications de conflits via les appels MCP `fetch_calendar_events`
   quand un mail confirme une réunion (sans passer par ce skill)
 - **Par la commande `/check-agenda`** : pour l'audit complet de
@@ -150,7 +150,7 @@ avec les indicateurs visuels :
 - **commande `/check-agenda`** : utilise ce skill pour l'audit
   complet, puis enrichit chaque conflit avec des propositions
   d'actions correctives et des créneaux alternatifs.
-- **agent `mail-analyzer`** : effectue directement les vérifications
+- **skill `sort-mails`** : effectue directement les vérifications
   de conflits via les appels MCP `fetch_calendar_events` quand un
   mail confirme ou modifie un événement calendrier, sans passer par
   ce skill.
