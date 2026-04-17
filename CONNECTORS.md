@@ -77,3 +77,33 @@ Le connecteur Claude in Chrome permet à Claude de piloter le navigateur de l'ut
 ## Configuration
 
 La configuration IMAP (serveur, identifiants) et les paramètres d'indexation sont gérés par le connecteur MCP via son fichier `.env`.
+
+## Désambiguation multi-serveurs
+
+Lorsque plusieurs serveurs MCP `~~todomail-mcp` sont connectés simultanément dans Claude Desktop (par exemple un serveur professionnel et un serveur personnel), Claude doit savoir lequel utiliser pour ce workspace. Le plugin utilise un mécanisme de configuration locale :
+
+- Fichier `.todomail-config.json` à la racine du répertoire de travail (géré automatiquement par `/start`, gitignoré)
+- Champ `expected_rag_name` qui contient le nom du serveur à utiliser
+- Vérification automatique en début de `/check-inbox` et `/process-todo` via le tool MCP `status` (qui retourne le `rag_name` du serveur connecté)
+
+### Configuration initiale
+
+Au premier lancement de `/start`, si aucun fichier `.todomail-config.json` n'existe :
+
+1. Le plugin détecte le(s) serveur(s) archiva connecté(s)
+2. Si plusieurs serveurs sont détectés, l'utilisateur choisit lequel utiliser pour ce workspace
+3. Le choix est enregistré dans `.todomail-config.json`
+
+### Reconfiguration
+
+Pour changer de serveur pour un workspace donné :
+1. Supprimer `.todomail-config.json`
+2. Relancer `/start`
+
+### Setup côté serveur
+
+Pour que le mécanisme fonctionne, chaque instance du serveur MCP archiva doit avoir un `RAG_NAME` unique dans son fichier `.env`. Par exemple :
+- `RAG_NAME=Archiva-Pro` pour l'instance professionnelle
+- `RAG_NAME=Archiva-PERSO` pour l'instance personnelle
+
+Le `rag_name` est alors retourné par le tool `status` et utilisé pour la vérification.

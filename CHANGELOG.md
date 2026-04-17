@@ -7,6 +7,26 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.0.0-alpha.2] - 2026-04-17
+
+### Supprime
+
+- `.mcp.json` a la racine du plugin : inadequat dans Claude Desktop (le proxy stdio de FastMCP exige un serveur HTTP local non-authentifie, inexistant dans le setup de l'utilisateur qui utilise uniquement des serveurs Auth0/Cloudflare). Cree plus de problemes qu'il n'en resout (connexions dupliquees, serveur fantome, comportement erratique).
+
+### Ajoute
+
+- Mecanisme de desambiguation au niveau du workspace : fichier `.todomail-config.json` a la racine du repertoire de travail (gitignore, geree automatiquement par le plugin) contenant le `expected_rag_name` du serveur MCP attendu.
+- `lib/config.py` : helper Python pour lire/ecrire la config workspace et verifier le `rag_name` via le tool MCP `status`.
+- Commande `/start` : nouvelle etape 0 "Configuration du serveur MCP" qui detecte le(s) serveur(s) archiva connecte(s), demande a l'utilisateur lequel utiliser pour ce workspace (via `AskUserQuestion`) et ecrit la config.
+- Commandes `/check-inbox` et `/process-todo` : verification prealable obligatoire que `status.rag_name` correspond a `expected_rag_name`. En cas de mismatch, arret avec message clair.
+
+### Modifie
+
+- `CONNECTORS.md` : documentation du mecanisme de desambiguation et du cas d'usage multi-serveurs.
+- `README.md` : retrait de la mention `.mcp.json` dans l'arborescence, ajout de `.todomail-config.json` dans l'arborescence workspace.
+
+---
+
 ## [2.0.0-alpha.1] - 2026-04-16
 
 ### BREAKING — Refactoring v2 Phase 1

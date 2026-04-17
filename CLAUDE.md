@@ -64,6 +64,7 @@ Le repertoire `lib/` contient des helpers Python partages par les skills et comm
 - `lib/fs_utils.py` — operations fichiers idempotentes (`safe_mv`, `safe_rm`, `atomic_write_json`) et helpers JSON v2
 - `lib/rag_cache.py` — cache RAG en memoire de session
 - `lib/error_modes.py` — strategie d'erreur (`lenient`/`strict`/`resume`)
+- `lib/config.py` — lecture/ecriture du `.todomail-config.json` (config workspace, desambiguation serveur MCP)
 
 Ces helpers seront exploites par les skills et commandes a partir de la Phase 2 du refactoring.
 Voir `lib/README.md` pour la documentation complete.
