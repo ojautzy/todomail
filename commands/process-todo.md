@@ -159,12 +159,27 @@ Pour chaque mail :
 - Exploiter `agenda-info` si présent (disponibilité/conflit/créneaux dans la
   proposition).
 - Produire la proposition selon la catégorie :
-  - `do-decide` → projet d'arbitrage markdown (contexte, demande, options,
-    reco, destinataire déduit).
-  - `do-consult-and-decide` → résumé + consultant identifié via lookup mémoire.
-  - `do-other` → résumé + destinataire identifié.
-  - `do-self` → `checklist.md` (contexte, contact, tâches + échéances) + liste
-    des livrables (note/excel/pptx/graphique + description).
+  - **`do-decide`** → projet d'arbitrage markdown structuré : contexte du
+    dossier, demande d'arbitrage, options **avec avantages et inconvénients**,
+    **recommandation argumentée**, destinataire déduit de l'expéditeur original.
+  - **`do-consult-and-decide`** → résumé du mail + identification du
+    **consultant** (personne ou service **à consulter avant arbitrage**) via
+    lookup mémoire.
+  - **`do-other`** → résumé du mail + identification du **destinataire**
+    (personne ou service **à qui déléguer le traitement**) via lookup mémoire.
+  - **`do-self`** → plan d'action sous forme de `checklist.md` :
+    ```markdown
+    # Plan d'action {objet du mail}
+
+    **Contexte:** {résumé de la demande}
+    **Contact:** {expéditeur}
+
+    ## A FAIRE
+    - [ ]  {tâche 1} pour le {échéance 1}
+    - [ ]  {tâche 2} pour le {échéance 2}
+    ```
+    + **liste des livrables proposés** (note / graphique / tableau Excel /
+    présentation PowerPoint) avec description du contenu de chacun.
 - Pré-calculer classification PJ (chemins `docs/AURA/*` ou `docs/MIN/*`).
 - **Écrire `_treatment.json`** (`mode: "analyze"`, proposition complète,
   métadonnées de finalisation). Reprise post-mortem possible.
@@ -196,11 +211,20 @@ Présenter la proposition puis poser la question selon la catégorie :
   corrigé).
 - Allouer numéro `to-send/` : lister `to-send/<destinataire>_*.md`, prendre
   `max(NN)+1` (format 2 chiffres).
-- Sauvegarder `to-send/<destinataire>_<NN>.md` avec frontmatter YAML :
+- **Contenu du fichier `to-send/<destinataire>_<NN>.md` selon la catégorie** :
+  - **`do-decide`** → projet d'arbitrage validé, destiné à la personne chargée
+    de mettre en œuvre l'arbitrage.
+  - **`do-consult-and-decide`** → mail de transmission **demandant les éléments
+    d'analyse avant arbitrage**, adressé au consultant.
+  - **`do-other`** → mail de transmission **pour suite à donner**, adressé au
+    destinataire identifié.
+  - **`do-self`** → projet de mail de réponse à l'expéditeur initial
+    (**accusé de réception avec engagement d'échéance**).
+- Tous les fichiers `to-send/*.md` portent un frontmatter YAML obligatoire :
   ```markdown
   ---
   to: prenom.nom@email.com
-  cc: ... (si présent)
+  cc: ... (si présent, sinon omettre)
   subject: ...
   date: AAAA-MM-JJ
   ref_mail_id: <id>
@@ -211,10 +235,12 @@ Présenter la proposition puis poser la question selon la catégorie :
 - `do-consult-and-decide` / `do-other` : préparer `consult_entry`
   (`| {id} | {date_du_jour} | {destinataire} | {résumé} |`) dans
   `_treatment.json.finalization.consult_entry` (consolidé Étape 5).
-- `do-self` : créer `to-work/<nom-descriptif>/`, y sauvegarder `checklist.md`
-  validé, copier les documents à signer/relire. **Livrables** (note/excel/pptx/
-  graphique) produits via skills plateforme `docx`/`xlsx`/`pptx` ou `python3 +
-  matplotlib` dans ce même répertoire.
+- `do-self` : créer `to-work/<nom-descriptif>/`, y sauvegarder le `checklist.md`
+  validé, copier les documents à signer et documents à relire depuis le
+  répertoire du mail. **Livrables** (note/excel/pptx/graphique) produits via
+  les skills plateforme `docx`/`xlsx`/`pptx` ou `python3 + matplotlib` dans ce
+  même répertoire, à partir des spécifications de `proposal.deliverables` et
+  du contexte `analysis.summary` (pas besoin de relire le mail original).
 - Archiver le mail (`<id>.eml` → `mails/AAAA/MM/`).
 - Classer les PJ via `classify-attachment` (chemin **obligatoirement**
   `docs/AURA/*` ou `docs/MIN/*`).
@@ -336,7 +362,11 @@ Contrat produit pour chaque mail (artefact de reprise, réécrit à chaque phase
 - PJ illisible → « non lisible : [nom] » dans `analysis.attachments`.
 - Chemins de classement PJ **obligatoirement** `docs/AURA/*` ou `docs/MIN/*` —
   toute autre destination = anomalie (consignée, pas créée).
-- Toute proposition traçable à un fichier lu dans cette session.
+- Toute proposition (projet d'arbitrage, résumé, plan d'action, livrable)
+  traçable à un fichier effectivement lu dans cette session.
+- **`status: "success"` dans `_treatment.json` uniquement si les fichiers ont
+  effectivement été déplacés/écrits** (modes `autonomous` et `finalize`). Sinon
+  `status: "error"` avec `error` renseigné.
 
 ## Notes
 
