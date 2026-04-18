@@ -32,7 +32,11 @@ def _plugin_data_dir() -> Path:
 
 
 def _log_smoke(payload: dict) -> None:
-    """Trace de déclenchement (activable via .hooks_debug à la racine projet)."""
+    """Trace de déclenchement (activable via .hooks_debug à la racine projet).
+
+    Capture source, cwd, PATH, python, session_id. Utile pour diagnostiquer
+    les problèmes de déclenchement dans Claude Desktop (macOS GUI).
+    """
     project = _project_dir(payload)
     if not (project / ".hooks_debug").exists():
         return
@@ -41,7 +45,14 @@ def _log_smoke(payload: dict) -> None:
         data_dir.mkdir(parents=True, exist_ok=True)
         with open(data_dir / ".hooks_fired.log", "a", encoding="utf-8") as f:
             ts = datetime.now(timezone.utc).isoformat()
-            f.write(f"{ts} SessionStart source={payload.get('source', '?')}\n")
+            f.write(
+                f"{ts} SessionStart "
+                f"source={payload.get('source', '?')} "
+                f"session={payload.get('session_id', '?')} "
+                f"cwd={payload.get('cwd', '?')} "
+                f"python={sys.executable} "
+                f"PATH={os.environ.get('PATH', '?')[:200]}\n"
+            )
     except OSError:
         pass
 

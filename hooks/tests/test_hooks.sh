@@ -109,6 +109,15 @@ check "stdin vide : exit 0" bash -c 'echo -n "" | python3 hooks/pre_compact.py'
 echo "=== hooks.json valide ==="
 check "hooks.json JSON valide" bash -c 'python3 -m json.tool hooks/hooks.json >/dev/null'
 
+echo "=== _run.sh wrapper ==="
+check "_run.sh executable" test -x hooks/_run.sh
+# Appel via le wrapper avec un hook simple
+out=$(CLAUDE_PLUGIN_ROOT="$(pwd)" \
+  CLAUDE_PLUGIN_DATA="$CLAUDE_PLUGIN_DATA" \
+  sh hooks/_run.sh hooks/enforce_classify.py \
+  < <(echo '{"hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"docs/RANDOM/x.pdf"}}'))
+check "wrapper exec enforce_classify deny" assert_deny "$out"
+
 echo ""
 echo "Resultat : $PASS OK / $FAIL FAIL"
 if [ "$FAIL" -gt 0 ]; then
