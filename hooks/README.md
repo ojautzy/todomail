@@ -161,25 +161,22 @@ Chemin typique :
 
 Supprimer `.hooks_debug` désactive le log (silencieux par défaut).
 
-## Wrapper `_run.sh` (macOS Claude Desktop)
+## Déclenchement dans Claude Desktop (lazy init)
 
-Toutes les commandes dans `hooks.json` passent par
-`hooks/_run.sh <script.py>` plutôt que d'appeler `python3` directement.
-Raison : sur macOS, Claude Desktop (app GUI) hérite d'un PATH minimal
-(`/usr/bin:/bin:/usr/sbin:/sbin`) qui ne contient ni `/opt/homebrew/bin`
-ni `/usr/local/bin`. Les utilisateurs installant Python via Homebrew
-(cas très majoritaire) verraient sinon leurs hooks échouer
-silencieusement.
+Claude Desktop instancie le runtime Claude Code de manière paresseuse :
 
-Le wrapper :
+- Cliquer *« + New session »* puis choisir un dossier **ne déclenche
+  rien** — juste une préparation UI.
+- Un prompt conversationnel simple (« bonjour ») peut ne pas suffire à
+  charger le plugin.
+- **Une commande du plugin** (`/todomail:start`, `/todomail:check-inbox`,
+  etc.) force l'instanciation du runtime → chargement des hooks →
+  déclenchement `SessionStart`, puis `UserPromptSubmit` sur les tours
+  suivants.
 
-1. Préfixe le `PATH` avec `/opt/homebrew/bin:/usr/local/bin:/opt/local/bin`.
-2. Vérifie que `python3` est trouvable — sinon sort en exit 0 (graceful
-   degradation : on ne plante jamais une session).
-3. `exec python3 "$@"` avec le PATH étendu.
-
-Ce wrapper est inoffensif en CLI : le PATH hérité est déjà complet, les
-préfixes ajoutés ne gênent pas.
+Si `.hooks_debug` est en place et que le log reste vide, vérifier que tu
+as bien invoqué une commande du plugin au moins une fois dans la
+session.
 
 ## Limitations connues
 

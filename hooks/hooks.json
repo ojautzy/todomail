@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/_run.sh\" \"${CLAUDE_PLUGIN_ROOT}/hooks/session_start.py\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/session_start.py\"",
             "timeout": 10
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/_run.sh\" \"${CLAUDE_PLUGIN_ROOT}/hooks/inject_context.py\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/inject_context.py\"",
             "timeout": 5
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/_run.sh\" \"${CLAUDE_PLUGIN_ROOT}/hooks/enforce_classify.py\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/enforce_classify.py\"",
             "timeout": 5
           }
         ]
@@ -41,13 +41,13 @@
           {
             "type": "command",
             "if": "Bash(mv *)",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/_run.sh\" \"${CLAUDE_PLUGIN_ROOT}/hooks/invalidate_dashboard_cache.py\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/invalidate_dashboard_cache.py\"",
             "timeout": 5
           },
           {
             "type": "command",
             "if": "Bash(rm *)",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/_run.sh\" \"${CLAUDE_PLUGIN_ROOT}/hooks/invalidate_dashboard_cache.py\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/invalidate_dashboard_cache.py\"",
             "timeout": 5
           }
         ]
@@ -58,7 +58,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/_run.sh\" \"${CLAUDE_PLUGIN_ROOT}/hooks/pre_compact.py\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/pre_compact.py\"",
             "timeout": 10
           }
         ]
