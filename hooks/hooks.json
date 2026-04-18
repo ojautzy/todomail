@@ -1,9 +1,68 @@
 {
   "hooks": {
-    "SessionStart": [],
-    "PreToolUse": [],
-    "PostToolUse": [],
-    "UserPromptSubmit": [],
-    "PreCompact": []
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/session_start.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/inject_context.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/enforce_classify.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(mv *)",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/invalidate_dashboard_cache.py\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(rm *)",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/invalidate_dashboard_cache.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/pre_compact.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }
