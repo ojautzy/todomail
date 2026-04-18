@@ -14,6 +14,29 @@ Trie `inbox/` dans les 7 catégories de `todo/`. Exploite le contexte 1M d'Opus
 pour analyser les mails en flux (pas d'agent par mail), avec pré-filtrage Haiku
 sur les évidences et cache RAG pour éviter les appels MCP redondants.
 
+## Accès aux helpers Python du plugin (à lire en premier)
+
+Les modules `lib.state`, `lib.fs_utils`, `lib.rag_cache`, `lib.error_modes`,
+`lib.config` mentionnés dans ce SKILL vivent dans **`${CLAUDE_PLUGIN_ROOT}/lib/`**,
+PAS dans le répertoire du skill ni dans le workspace utilisateur. Ne pas chercher
+`skills/sort-mails/lib/` — ce chemin n'existe pas.
+
+Toute invocation Python qui importe `lib.*` DOIT d'abord ajouter
+`${CLAUDE_PLUGIN_ROOT}` au `sys.path`. Pattern canonique pour chaque bloc Bash :
+
+```bash
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 - <<'PY'
+import sys, os
+sys.path.insert(0, os.environ["CLAUDE_PLUGIN_ROOT"])
+from lib.state import load_state, save_state, acquire_lock, release_lock, update_checkpoint, record_error, get_pending_errors
+from lib.fs_utils import safe_mv, atomic_write_json, read_v2_json, write_v2_json, read_pending_emails, write_pending_emails
+from lib.rag_cache import RagCache
+# ... suite du traitement ...
+PY
+```
+
+Si un `import lib.X` renvoie `ModuleNotFoundError`, ne **JAMAIS** conclure « pas de lib externe, analyse directe en flux » — c'est un bug d'import, pas une caractéristique du skill. Fixer le `sys.path` et retenter. Les helpers sont indispensables : sans `acquire_lock`/`save_state`, le dashboard n'est pas notifié du cycle et `state.json` reste incohérent.
+
 ## Vérification préalable des répertoires
 
 Vérifier la présence de `inbox/`, `todo/`, `to-clean-by-user/` et des 7 sous-dossiers

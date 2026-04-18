@@ -68,3 +68,22 @@ Le repertoire `lib/` contient des helpers Python partages par les skills et comm
 
 Ces helpers seront exploites par les skills et commandes a partir de la Phase 2 du refactoring.
 Voir `lib/README.md` pour la documentation complete.
+
+### Import Python depuis les skills/commandes (regle imperative)
+
+Les helpers `lib/` vivent dans **`${CLAUDE_PLUGIN_ROOT}/lib/`**, PAS dans le repertoire du skill ni dans le workspace utilisateur. Le LLM qui execute un skill ne doit JAMAIS chercher `skills/<skill>/lib/` ni `lib/` relatif au cwd — ce chemin est inexistant.
+
+**Pattern canonique** pour tout bloc Bash qui importe un module `lib.*` :
+
+```bash
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 - <<'PY'
+import sys, os
+sys.path.insert(0, os.environ["CLAUDE_PLUGIN_ROOT"])
+from lib.state import load_state, save_state, acquire_lock, release_lock
+# ...
+PY
+```
+
+**Anti-pattern a ne jamais reproduire** : si un `import lib.X` renvoie `ModuleNotFoundError`, **ne pas** conclure « pas de lib externe, analyse directe en flux ». C'est un bug d'import, pas une caracteristique du skill. Fixer le `sys.path` et retenter. Les helpers sont indispensables — sans `acquire_lock`/`save_state`, le dashboard ne voit pas le cycle et l'idempotence (`safe_mv`) n'est pas garantie.
+
+Tout nouveau SKILL.md ou command.md qui touche `lib/` doit embarquer ce pattern en preambule explicite (voir `skills/sort-mails/SKILL.md`, `commands/check-inbox.md`, `commands/process-todo.md`).

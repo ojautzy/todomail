@@ -14,6 +14,22 @@ strictement opt-in.
 > **RÈGLE D'EXÉCUTION :** à chaque ARRÊT OBLIGATOIRE, afficher la proposition,
 > cesser toute exécution et attendre une réponse explicite.
 
+## Accès aux helpers Python du plugin (à lire en premier)
+
+Les modules `lib.state`, `lib.fs_utils`, `lib.rag_cache` référencés ci-dessous vivent dans **`${CLAUDE_PLUGIN_ROOT}/lib/`**. Toute invocation Python DOIT d'abord ajouter ce chemin au `sys.path` :
+
+```bash
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 - <<'PY'
+import sys, os
+sys.path.insert(0, os.environ["CLAUDE_PLUGIN_ROOT"])
+from lib.state import load_state, save_state, acquire_lock, release_lock, update_checkpoint, get_pending_errors, clear_error
+from lib.fs_utils import safe_mv, safe_rm, atomic_write_json, read_v2_json, write_v2_json
+# ...
+PY
+```
+
+Si `ModuleNotFoundError: lib`, ne **jamais** conclure « pas de lib externe » — fixer le `sys.path` et retenter. Les helpers sont indispensables : sans `acquire_lock`/`save_state`, le dashboard ne voit pas le cycle et `state.json` reste incohérent.
+
 ## Parsing des arguments
 
 Arguments dans `$ARGUMENTS`, parsing sémantique (pas de script externe).
