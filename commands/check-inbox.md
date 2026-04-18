@@ -6,18 +6,21 @@ argument-hint: "[--strict] [--retry]"
 
 ## Accès aux helpers Python du plugin (à lire en premier)
 
-Les modules `lib.state`, `lib.fs_utils`, `lib.rag_cache` référencés ci-dessous vivent dans **`${CLAUDE_PLUGIN_ROOT}/lib/`**. Toute invocation Python DOIT d'abord ajouter ce chemin au `sys.path` :
+Les modules `lib.state`, `lib.fs_utils`, `lib.rag_cache` référencés ci-dessous vivent à la racine du plugin, résolue via la variable d'environnement `CLAUDE_PLUGIN_ROOT`. La variable est récupérée **côté Python** (la substitution shell `${CLAUDE_PLUGIN_ROOT}` n'est pas fiable dans tous les contextes d'exécution) :
 
 ```bash
-PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 - <<'PY'
+python3 - <<'PY'
 import sys, os
-sys.path.insert(0, os.environ["CLAUDE_PLUGIN_ROOT"])
+plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not plugin_root:
+    raise RuntimeError("CLAUDE_PLUGIN_ROOT non defini")
+sys.path.insert(0, plugin_root)
 from lib.state import load_state, save_state, acquire_lock, release_lock, get_pending_errors, clear_error
 # ...
 PY
 ```
 
-Si `ModuleNotFoundError: lib`, ne **jamais** conclure « pas de lib externe » — fixer le `sys.path` et retenter. Les helpers sont indispensables : sans eux, le dashboard n'est pas notifié du cycle.
+Si `ModuleNotFoundError: lib`, ne **jamais** conclure « pas de lib externe » — vérifier que `CLAUDE_PLUGIN_ROOT` est bien défini et retenter. Les helpers sont indispensables : sans eux, le dashboard n'est pas notifié du cycle.
 
 ## Parsing des arguments
 

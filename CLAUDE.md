@@ -71,19 +71,24 @@ Voir `lib/README.md` pour la documentation complete.
 
 ### Import Python depuis les skills/commandes (regle imperative)
 
-Les helpers `lib/` vivent dans **`${CLAUDE_PLUGIN_ROOT}/lib/`**, PAS dans le repertoire du skill ni dans le workspace utilisateur. Le LLM qui execute un skill ne doit JAMAIS chercher `skills/<skill>/lib/` ni `lib/` relatif au cwd — ce chemin est inexistant.
+Les helpers `lib/` vivent a la racine du plugin, resolue via la variable d'environnement `CLAUDE_PLUGIN_ROOT`. Le LLM qui execute un skill ne doit JAMAIS chercher `skills/<skill>/lib/` ni `lib/` relatif au cwd — ce chemin est inexistant.
+
+**Contexte technique** : la substitution shell de `${CLAUDE_PLUGIN_ROOT}` dans les fichiers markdown de SKILL/command n'est pas garantie selon les contextes d'execution (issue amont Anthropic connue). La variable est en revanche exportee comme variable d'environnement aux sous-processus lances via `Bash`. Il faut donc la resoudre **cote Python**, pas via la substitution shell.
 
 **Pattern canonique** pour tout bloc Bash qui importe un module `lib.*` :
 
 ```bash
-PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 - <<'PY'
+python3 - <<'PY'
 import sys, os
-sys.path.insert(0, os.environ["CLAUDE_PLUGIN_ROOT"])
+plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not plugin_root:
+    raise RuntimeError("CLAUDE_PLUGIN_ROOT non defini")
+sys.path.insert(0, plugin_root)
 from lib.state import load_state, save_state, acquire_lock, release_lock
 # ...
 PY
 ```
 
-**Anti-pattern a ne jamais reproduire** : si un `import lib.X` renvoie `ModuleNotFoundError`, **ne pas** conclure « pas de lib externe, analyse directe en flux ». C'est un bug d'import, pas une caracteristique du skill. Fixer le `sys.path` et retenter. Les helpers sont indispensables — sans `acquire_lock`/`save_state`, le dashboard ne voit pas le cycle et l'idempotence (`safe_mv`) n'est pas garantie.
+**Anti-pattern a ne jamais reproduire** : si un `import lib.X` renvoie `ModuleNotFoundError`, **ne pas** conclure « pas de lib externe, analyse directe en flux ». C'est un bug d'import, pas une caracteristique du skill. Verifier que `CLAUDE_PLUGIN_ROOT` est bien defini (`env | grep CLAUDE`), fixer le `sys.path` et retenter. Les helpers sont indispensables — sans `acquire_lock`/`save_state`, le dashboard ne voit pas le cycle et l'idempotence (`safe_mv`) n'est pas garantie.
 
 Tout nouveau SKILL.md ou command.md qui touche `lib/` doit embarquer ce pattern en preambule explicite (voir `skills/sort-mails/SKILL.md`, `commands/check-inbox.md`, `commands/process-todo.md`).
