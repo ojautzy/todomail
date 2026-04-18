@@ -58,6 +58,30 @@ def _workspace_mirror_path() -> Path | None:
     return project / ".todomail-state.json"
 
 
+def _touch_dashboard_invalidate() -> None:
+    """Touche `dashboard_invalidate.txt` a la racine du workspace.
+
+    Signal unifie pour le dashboard (polling 3s) : tout `save_state()`
+    publie un top externe detectable via File System Access, sans dependre
+    du hook `PostToolUse Bash(mv|rm)` — qui ne fire pas quand les skills
+    bougent les fichiers via Python (`lib.fs_utils.safe_mv`, etc.).
+    Best-effort, silencieux en cas d'erreur.
+    """
+    env = os.environ.get("CLAUDE_PROJECT_DIR")
+    if not env:
+        return
+    project = Path(env)
+    if not project.is_dir():
+        return
+    path = project / "dashboard_invalidate.txt"
+    try:
+        path.touch(exist_ok=True)
+        now = datetime.now(timezone.utc).timestamp()
+        os.utime(path, (now, now))
+    except OSError:
+        pass
+
+
 def _generate_session_id() -> str:
     now = datetime.now(timezone.utc)
     suffix = secrets.token_hex(3)
@@ -102,15 +126,16 @@ def save_state(state: dict) -> None:
     os.replace(str(tmp), str(path))
 
     mirror = _workspace_mirror_path()
-    if mirror is None:
-        return
-    try:
-        mirror_tmp = mirror.with_suffix(".json.tmp")
-        with open(mirror_tmp, "w", encoding="utf-8") as f:
-            json.dump(state, f, ensure_ascii=False, indent=2)
-        os.replace(str(mirror_tmp), str(mirror))
-    except OSError:
-        pass
+    if mirror is not None:
+        try:
+            mirror_tmp = mirror.with_suffix(".json.tmp")
+            with open(mirror_tmp, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            os.replace(str(mirror_tmp), str(mirror))
+        except OSError:
+            pass
+
+    _touch_dashboard_invalidate()
 
 
 def update_checkpoint(phase: str, status: str, payload: dict[str, Any] | None = None) -> None:

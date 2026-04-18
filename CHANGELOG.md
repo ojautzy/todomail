@@ -34,6 +34,12 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 - Plus de désynchronisation silencieuse entre le dashboard et Claude : un cycle `/todomail:check-inbox` ou `/todomail:process-todo` est détecté dans les 3s côté dashboard.
 - Plus d'écrasement d'`instructions.json` valides lors d'un simple changement d'onglet côté utilisateur.
 
+### Correctifs post-test (bugfix avant merge)
+
+- `lib/state.py.save_state()` touche désormais `dashboard_invalidate.txt` à chaque écriture d'état — `sort-mails` et `process-todo` déplaçant les fichiers via Python (`lib.fs_utils.safe_mv`), le hook `PostToolUse Bash(mv|rm)` ne peut pas être le signal exclusif. Chaque `acquire_lock`/`release_lock`/`update_checkpoint` publie maintenant un top externe visible par le polling 3s. Signal fiable indépendant du canal Bash.
+- Banner de fraîcheur durci : on n'affiche « Données obsolètes » que si `pendingMeta.generated_at < workspaceState.started_at` (fichier écrit strictement avant le début de la session active). Évite les faux positifs quand un skill génère son propre `session_id` dans le `_meta` au lieu de réutiliser celui du `state.json`.
+- Bouton « Recharger » désormais actif : force un `refreshAll` complet (pending_emails + compteurs + workspace state + invalidate stamp) et masque le banner jusqu'à un changement de catégorie.
+
 ---
 
 ## [2.0.0-alpha.7] - 2026-04-18

@@ -233,6 +233,7 @@
             const [invalidateStamp, setInvalidateStamp] = useState(null);  // lastModified de dashboard_invalidate.txt
             const [errorsPanelOpen, setErrorsPanelOpen] = useState(false);
             const [dismissedIds, setDismissedIds] = useState(new Set());    // IDs retires cote UI apres bouton Ignorer
+            const [stalenessDismissed, setStalenessDismissed] = useState(false); // banner stale masque apres clic Recharger
 
             // Etat vue Memoire
             const [memorySection, setMemorySection] = useState('claude');   // 'claude' | 'people' | 'projects' | 'context'
@@ -250,7 +251,22 @@
             const rawErrors = (workspaceState && Array.isArray(workspaceState.errors)) ? workspaceState.errors : [];
             const displayedErrors = rawErrors.filter(e => !dismissedIds.has(e.mail_id));
             const errorsCount = displayedErrors.length;
-            const isStale = !!(pendingMeta && pendingMeta.session_id && currentSessionId && pendingMeta.session_id !== currentSessionId);
+
+            // Banner de fraicheur strict : on n'alerte que si les donnees ont ete
+            // PRODUITES AVANT le demarrage de la session workspace courante — le
+            // test seul sur session_id genere des faux positifs quand un skill
+            // fabrique son propre identifiant au lieu de reutiliser celui du
+            // state.json. En comparant `generated_at` au `started_at` du state,
+            // on filtre ces faux positifs : meme si les session_id different, si
+            // le fichier a ete ecrit apres le debut de la session active, il est
+            // par definition coherent.
+            const workspaceStartedAt = workspaceState && workspaceState.started_at ? workspaceState.started_at : null;
+            const isStale = !stalenessDismissed && !!(
+                pendingMeta && pendingMeta.session_id && currentSessionId
+                && pendingMeta.session_id !== currentSessionId
+                && pendingMeta.generated_at && workspaceStartedAt
+                && pendingMeta.generated_at < workspaceStartedAt
+            );
 
             useEffect(() => {
                 if (isDark) document.documentElement.classList.add('dark');
@@ -418,7 +434,25 @@
                 setActiveSubdir(subdirKey);
                 setSelectedMail(null);
                 setExpandedCard(null);
+                setStalenessDismissed(false);
                 if (rootHandle) loadSubdirEmails(rootHandle, subdirKey);
+            };
+
+            const reloadStaleCategory = async () => {
+                if (!rootHandle) return;
+                setStalenessDismissed(true);
+                try {
+                    await Promise.all([
+                        loadSubdirEmails(rootHandle, activeSubdir, { preserveUi: true }),
+                        loadAllCounts(rootHandle),
+                        readWorkspaceState(rootHandle).then(s => s && setWorkspaceState(s)),
+                        readInvalidateStamp(rootHandle).then(st => st && setInvalidateStamp(st)),
+                    ]);
+                    showToast('refreshed');
+                } catch (err) {
+                    console.error(err);
+                    showToast('error');
+                }
             };
 
             // ========== PHASE 5 — Polling 3s sur .todomail-state.json + dashboard_invalidate.txt ==========
@@ -1257,7 +1291,7 @@
                                             </div>
                                         </div>
                                         <button
-                                            onClick={() => rootHandle && loadSubdirEmails(rootHandle, activeSubdir)}
+                                            onClick={reloadStaleCategory}
                                             className="text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg transition-colors"
                                         >
                                             Recharger
