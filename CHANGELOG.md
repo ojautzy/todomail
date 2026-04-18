@@ -7,6 +7,26 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.0.0-alpha.6] - 2026-04-18
+
+### Corrigé
+
+- **Hooks introuvables sur macOS Claude Desktop** : les apps GUI macOS héritent d'un PATH minimal (`/usr/bin:/bin:/usr/sbin:/sbin`) qui n'inclut ni `/opt/homebrew/bin` ni `/usr/local/bin`. Sur une installation Python par Homebrew (cas courant), les commandes `python3 …` des hooks échouaient silencieusement, rendant les 5 hooks inopérants. Les mêmes hooks fonctionnaient déjà correctement en CLI où le PATH utilisateur est hérité normalement.
+
+### Ajouté
+
+- `hooks/_run.sh` : wrapper shell qui préfixe `PATH` avec les chemins usuels (`/opt/homebrew/bin:/usr/local/bin:/opt/local/bin`) avant de déléguer à `python3`. Sort en exit 0 si `python3` reste introuvable (graceful degradation).
+- `hooks/hooks.json` : les 5 commandes `python3 …` ont été remplacées par `sh "${CLAUDE_PLUGIN_ROOT}/hooks/_run.sh" "${CLAUDE_PLUGIN_ROOT}/hooks/<hook>.py"`.
+- `session_start.py` : le log `.hooks_fired.log` (activable via `.hooks_debug`) capture désormais `source`, `session_id`, `cwd`, `sys.executable` et les 200 premiers caractères du `PATH`, pour faciliter le diagnostic si un hook ne se déclenche toujours pas.
+- `hooks/tests/test_hooks.sh` : deux tests supplémentaires valident l'invocation via `_run.sh` (20 OK au total).
+
+### Notes
+
+- **Bump de version obligatoire** : Claude Desktop ne rafraîchit le cache plugin que lorsque `plugin.json.version` change. Sans ce bump, l'installation via Customize garderait les scripts alpha.5 inchangés.
+- Ce hotfix est indépendant du chemin de déclenchement Claude Code CLI — les utilisateurs CLI ne voient aucune différence fonctionnelle.
+
+---
+
 ## [2.0.0-alpha.5] - 2026-04-18
 
 ### Ajouté — Refactoring v2 Phase 4

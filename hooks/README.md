@@ -161,6 +161,26 @@ Chemin typique :
 
 Supprimer `.hooks_debug` désactive le log (silencieux par défaut).
 
+## Wrapper `_run.sh` (macOS Claude Desktop)
+
+Toutes les commandes dans `hooks.json` passent par
+`hooks/_run.sh <script.py>` plutôt que d'appeler `python3` directement.
+Raison : sur macOS, Claude Desktop (app GUI) hérite d'un PATH minimal
+(`/usr/bin:/bin:/usr/sbin:/sbin`) qui ne contient ni `/opt/homebrew/bin`
+ni `/usr/local/bin`. Les utilisateurs installant Python via Homebrew
+(cas très majoritaire) verraient sinon leurs hooks échouer
+silencieusement.
+
+Le wrapper :
+
+1. Préfixe le `PATH` avec `/opt/homebrew/bin:/usr/local/bin:/opt/local/bin`.
+2. Vérifie que `python3` est trouvable — sinon sort en exit 0 (graceful
+   degradation : on ne plante jamais une session).
+3. `exec python3 "$@"` avec le PATH étendu.
+
+Ce wrapper est inoffensif en CLI : le PATH hérité est déjà complet, les
+préfixes ajoutés ne gênent pas.
+
 ## Limitations connues
 
 - **Plugin cache en lecture seule** (`${CLAUDE_PLUGIN_ROOT}` =
