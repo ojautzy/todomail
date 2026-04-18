@@ -7,6 +7,35 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.0.0-alpha.8] - 2026-04-18
+
+### Ajouté
+
+- **Dashboard v3** — Polling 3s sur `dashboard_invalidate.txt` et `.todomail-state.json` pour détecter les modifications de Claude. Le dashboard rafraîchit automatiquement les compteurs et la catégorie active sans action utilisateur.
+- Helper `extractEmailsAndMeta(data)` dans `skills/dashboard.html` : extension du hotfix alpha.3 (`extractEmails` conservé en lecture v1/v2) qui retourne aussi le bloc `_meta`. Idem `extractInstructionsAndMeta(data)` pour les `instructions.json`.
+- **Banner de fraîcheur** affiché en vue Catégorisation si le `_meta.session_id` du `pending_emails.json` ne correspond plus à la session courante du workspace (lue depuis `.todomail-state.json`).
+- **Verrou visuel** pendant qu'un cycle Claude tourne : bannière bleue « Claude travaille… (lock: X) », dropdowns de décision et boutons bulk grisés.
+- **Panneau d'erreurs** déployable depuis la zone principale : liste des entrées de `state.errors[]` avec phase, type, compteur de tentatives et message. Bouton « Retry tous » et « Ignorer » par erreur.
+- **Fichiers-marqueurs `retry_request.txt` et `errors_dismiss.txt`** à la racine du workspace : le dashboard exprime une intention utilisateur, `hooks/session_start.py` les consomme au démarrage de la prochaine commande du plugin (marque `retry_requested: true` ou retire l'erreur). Pattern symétrique à `dashboard_invalidate.txt`.
+- **Reconnexion automatique** du `DirectoryHandle` via IndexedDB : après la première autorisation, le dashboard rebranche silencieusement le workspace au rechargement (si la permission Chromium a survécu). Si la permission a expiré, un bouton « Reprendre la connexion » permet de ré-autoriser sans rouvrir le picker. Nouveau bouton « Oublier ce projet » pour invalider le handle persisté.
+- **Écran d'avertissement plein page** si le navigateur ne supporte pas l'API File System Access (Safari, Orion, Firefox) avec la liste explicite des moteurs compatibles.
+- **Vue Mémoire activée** (`memory` passe de `enabled: false` à `enabled: true`) : sidebar avec 4 sections — CLAUDE.md (racine), Personnes (`memory/people/`), Sujets (`memory/projects/`), Contexte (`memory/context/`). Chaque fichier est éditable via une modale textarea et supprimable (sauf CLAUDE.md) avec confirmation inline.
+- **Mirror `.todomail-state.json`** : `lib/state.py.save_state()` écrit désormais une copie du state canonique à la racine du workspace (`$CLAUDE_PROJECT_DIR`) pour que le dashboard HTML y accède via File System Access. No-op silencieux si la variable d'environnement n'est pas définie.
+- `.gitignore` : ajout de `.todomail-state.json`, `dashboard_invalidate.txt`, `retry_request.txt`, `errors_dismiss.txt` (artefacts runtime du workspace).
+
+### Modifié
+
+- **Suppression de l'auto-écriture systématique de `instructions.json`** au chargement d'une catégorie (ligne 239 alpha.7). Les fichiers d'instructions ne sont plus réécrits que sur action utilisateur réelle (`updateDecision` ou `bulkAction`), ce qui évite l'écrasement d'instructions fraîches en cours de `process-todo`.
+- `<title>` de `skills/dashboard.html` : retrait de la mention résiduelle « Cowork » (coquille héritée de la v1.x).
+- `README.dashboard.md` : nouvelle section consacrée au mécanisme de polling, au banner de fraîcheur, au verrou, au panneau d'erreurs et à la vue Mémoire.
+
+### Corrigé
+
+- Plus de désynchronisation silencieuse entre le dashboard et Claude : un cycle `/todomail:check-inbox` ou `/todomail:process-todo` est détecté dans les 3s côté dashboard.
+- Plus d'écrasement d'`instructions.json` valides lors d'un simple changement d'onglet côté utilisateur.
+
+---
+
 ## [2.0.0-alpha.7] - 2026-04-18
 
 ### Supprimé

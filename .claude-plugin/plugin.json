@@ -1,6 +1,6 @@
 {
   "name": "todomail",
-  "version": "2.0.0-alpha.7",
+  "version": "2.0.0-alpha.8",
   "description": "Traitement intelligent des emails reçus et gestion d'agenda : téléchargement, tri automatique par catégorie d'action, dashboard interactif, exécution des décisions, préparation de réunions et audit de cohérence agenda",
   "author": {
     "name": "Olivier Jautzy"

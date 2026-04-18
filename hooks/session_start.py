@@ -88,6 +88,89 @@ def _missing_dirs(project: Path) -> list[str]:
     return [d for d in expected if not (project / d).is_dir()]
 
 
+def _read_marker_ids(path: Path) -> list[str]:
+    """Lit un fichier-marqueur (un ID par ligne, # pour commentaires)."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    ids: list[str] = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        ids.append(stripped)
+    return ids
+
+
+def _consume_dashboard_markers(project: Path) -> list[str]:
+    """Consomme les fichiers-marqueurs ecrits par le dashboard.
+
+    - `retry_request.txt` : IDs de mails a relancer (ou fichier vide = tous).
+      Marque les entries correspondantes dans `state.errors[]` avec
+      `retry_requested: true` pour que `/process-todo --retry` les traite
+      en priorite.
+    - `errors_dismiss.txt` : IDs a retirer de `state.errors[]`.
+
+    Les deux fichiers sont supprimes apres consommation. Renvoie une
+    liste de notes a injecter dans le message de reprise.
+    """
+    notes: list[str] = []
+    retry_path = project / "retry_request.txt"
+    dismiss_path = project / "errors_dismiss.txt"
+    if not retry_path.exists() and not dismiss_path.exists():
+        return notes
+
+    try:
+        from lib.state import load_state, save_state
+    except Exception:
+        return notes
+
+    try:
+        state = load_state()
+    except Exception:
+        return notes
+
+    errors = state.get("errors", [])
+
+    if retry_path.exists():
+        ids = _read_marker_ids(retry_path)
+        if not ids:
+            for e in errors:
+                e["retry_requested"] = True
+            notes.append(f"{len(errors)} erreur(s) marquees pour retry")
+        else:
+            count = 0
+            for e in errors:
+                if e.get("mail_id") in ids:
+                    e["retry_requested"] = True
+                    count += 1
+            notes.append(f"{count} erreur(s) marquees pour retry")
+        try:
+            retry_path.unlink()
+        except OSError:
+            pass
+
+    if dismiss_path.exists():
+        ids = set(_read_marker_ids(dismiss_path))
+        before = len(errors)
+        state["errors"] = [e for e in errors if e.get("mail_id") not in ids]
+        removed = before - len(state["errors"])
+        if removed:
+            notes.append(f"{removed} erreur(s) ignoree(s) (dashboard)")
+        try:
+            dismiss_path.unlink()
+        except OSError:
+            pass
+
+    try:
+        save_state(state)
+    except Exception:
+        pass
+
+    return notes
+
+
 def _resume_message(missing: list[str]) -> str | None:
     """Compose un message de reprise si state.json ou répertoires le justifient."""
     try:
@@ -126,8 +209,13 @@ def main() -> None:
     cache = _build_memory_cache(project)
     _write_memory_cache(cache)
 
+    marker_notes = _consume_dashboard_markers(project)
     missing = _missing_dirs(project)
     msg = _resume_message(missing)
+    if marker_notes:
+        prefix = "[todomail] Dashboard : " + " | ".join(marker_notes)
+        msg = prefix if not msg else prefix + "\n" + msg
+
     if msg:
         output = {
             "hookSpecificOutput": {

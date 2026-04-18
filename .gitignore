@@ -21,6 +21,10 @@ docs/
 memory/
 consult.md
 .todomail-config.json
+.todomail-state.json
+dashboard_invalidate.txt
+retry_request.txt
+errors_dismiss.txt
 
 # Plugin runtime data (state.json fallback when CLAUDE_PLUGIN_DATA is not set)
 .plugin-data/

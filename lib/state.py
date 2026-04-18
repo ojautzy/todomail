@@ -42,6 +42,22 @@ def _state_path() -> Path:
     return _state_dir() / "state.json"
 
 
+def _workspace_mirror_path() -> Path | None:
+    """Chemin du mirror `.todomail-state.json` a la racine du workspace.
+
+    Renvoie None si `CLAUDE_PROJECT_DIR` n'est pas defini ou pointe sur
+    un repertoire inexistant. Le mirror permet au dashboard (File System
+    Access) d'acceder a l'etat persistant hors `${CLAUDE_PLUGIN_DATA}`.
+    """
+    env = os.environ.get("CLAUDE_PROJECT_DIR")
+    if not env:
+        return None
+    project = Path(env)
+    if not project.is_dir():
+        return None
+    return project / ".todomail-state.json"
+
+
 def _generate_session_id() -> str:
     now = datetime.now(timezone.utc)
     suffix = secrets.token_hex(3)
@@ -70,7 +86,13 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
-    """Atomic write of state dict to state.json."""
+    """Atomic write of state dict to state.json.
+
+    Ecrit aussi un mirror `.todomail-state.json` a la racine du workspace
+    (`$CLAUDE_PROJECT_DIR`) pour que le dashboard HTML y accede via File
+    System Access. Le mirror est best-effort : toute erreur est avalee
+    silencieusement pour ne pas bloquer le state canonique.
+    """
     path = _state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
@@ -78,6 +100,17 @@ def save_state(state: dict) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
     os.replace(str(tmp), str(path))
+
+    mirror = _workspace_mirror_path()
+    if mirror is None:
+        return
+    try:
+        mirror_tmp = mirror.with_suffix(".json.tmp")
+        with open(mirror_tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        os.replace(str(mirror_tmp), str(mirror))
+    except OSError:
+        pass
 
 
 def update_checkpoint(phase: str, status: str, payload: dict[str, Any] | None = None) -> None:
