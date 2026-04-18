@@ -7,6 +7,25 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.0.0-alpha.7] - 2026-04-18
+
+### Supprimé
+
+- `hooks/_run.sh` (wrapper shell ajouté en alpha.6). Le diagnostic initial « PATH minimal sur macOS GUI » s'est révélé erroné : la ligne `.hooks_fired.log` produite en alpha.6 montre que le `PATH` hérité par les hooks contient déjà `/opt/homebrew/bin` (et autres chemins utilisateur). Le wrapper prefixait donc un PATH déjà correct — geste défensif mais inutile.
+
+### Modifié
+
+- `hooks/hooks.json` : retour à l'invocation directe `python3 "${CLAUDE_PLUGIN_ROOT}/hooks/<hook>.py"`, alignée avec la façon dont les skills/commandes existants du plugin appellent Python (jamais eu besoin d'étendre le PATH).
+- `hooks/README.md` : section « Wrapper `_run.sh` » remplacée par « Déclenchement dans Claude Desktop (lazy init) » qui documente le vrai piège rencontré : Claude Desktop n'instancie le runtime Claude Code (et donc les hooks) que sur **invocation d'une commande du plugin** (`/todomail:start`, `/check-inbox`, etc.) — pas sur simple ouverture de session ou prompt conversationnel.
+
+### Notes post-mortem
+
+- En alpha.5, le log `.hooks_fired.log` restait vide non pas à cause du PATH, mais parce qu'aucune commande du plugin n'avait été invoquée pendant la session de test — le runtime n'était pas instancié.
+- Ce qui a débloqué les hooks entre alpha.5 et alpha.6 n'est pas le wrapper, mais **(a)** le bump de version obligatoire pour que Claude Desktop recharge le plugin, combiné à **(b)** l'appel effectif de `/todomail:start`.
+- L'amélioration du logging diagnostique (`source`, `session_id`, `cwd`, `sys.executable`, `PATH`) introduite en alpha.6 est conservée — c'est elle qui a permis de diagnostiquer proprement.
+
+---
+
 ## [2.0.0-alpha.6] - 2026-04-18
 
 ### Corrigé
