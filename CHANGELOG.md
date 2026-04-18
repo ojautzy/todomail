@@ -37,8 +37,7 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 ### Correctifs post-test (bugfix avant merge)
 
 - `lib/state.py.save_state()` touche désormais `dashboard_invalidate.txt` à chaque écriture d'état — `sort-mails` et `process-todo` déplaçant les fichiers via Python (`lib.fs_utils.safe_mv`), le hook `PostToolUse Bash(mv|rm)` ne peut pas être le signal exclusif. Chaque `acquire_lock`/`release_lock`/`update_checkpoint` publie maintenant un top externe visible par le polling 3s. Signal fiable indépendant du canal Bash.
-- Banner de fraîcheur durci : on n'affiche « Données obsolètes » que si `pendingMeta.generated_at < workspaceState.started_at` (fichier écrit strictement avant le début de la session active). Évite les faux positifs quand un skill génère son propre `session_id` dans le `_meta` au lieu de réutiliser celui du `state.json`.
-- Bouton « Recharger » désormais actif : force un `refreshAll` complet (pending_emails + compteurs + workspace state + invalidate stamp) et masque le banner jusqu'à un changement de catégorie.
+- **Retrait complet du banner « Données obsolètes »** : la comparaison `pending_emails.json._meta.session_id` vs `state.json.session_id` générait des faux positifs permanents parce que `sort-mails` écrit un UUID custom tandis que `lib/state.py` utilise un format timestamp — divergence structurelle jamais réconciliée. La condition durcie (`generated_at < started_at`) restait techniquement correcte mais n'apportait aucune information actionnable : tous les fichiers existants ont par construction un `generated_at` antérieur à un `started_at` rafraîchi en session courante. Le polling 3s + le rechargement systématique à chaque `switchSubdir` + le verrou visuel pendant un cycle suffisent à garantir la cohérence visible. La normalisation des `session_id` entre `sort-mails` et `lib/state.py` est reportée en Phase 6.
 
 ---
 

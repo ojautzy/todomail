@@ -233,7 +233,6 @@
             const [invalidateStamp, setInvalidateStamp] = useState(null);  // lastModified de dashboard_invalidate.txt
             const [errorsPanelOpen, setErrorsPanelOpen] = useState(false);
             const [dismissedIds, setDismissedIds] = useState(new Set());    // IDs retires cote UI apres bouton Ignorer
-            const [stalenessDismissed, setStalenessDismissed] = useState(false); // banner stale masque apres clic Recharger
 
             // Etat vue Memoire
             const [memorySection, setMemorySection] = useState('claude');   // 'claude' | 'people' | 'projects' | 'context'
@@ -252,21 +251,13 @@
             const displayedErrors = rawErrors.filter(e => !dismissedIds.has(e.mail_id));
             const errorsCount = displayedErrors.length;
 
-            // Banner de fraicheur strict : on n'alerte que si les donnees ont ete
-            // PRODUITES AVANT le demarrage de la session workspace courante — le
-            // test seul sur session_id genere des faux positifs quand un skill
-            // fabrique son propre identifiant au lieu de reutiliser celui du
-            // state.json. En comparant `generated_at` au `started_at` du state,
-            // on filtre ces faux positifs : meme si les session_id different, si
-            // le fichier a ete ecrit apres le debut de la session active, il est
-            // par definition coherent.
-            const workspaceStartedAt = workspaceState && workspaceState.started_at ? workspaceState.started_at : null;
-            const isStale = !stalenessDismissed && !!(
-                pendingMeta && pendingMeta.session_id && currentSessionId
-                && pendingMeta.session_id !== currentSessionId
-                && pendingMeta.generated_at && workspaceStartedAt
-                && pendingMeta.generated_at < workspaceStartedAt
-            );
+            // Banner de fraicheur retire en alpha.8 post-test : la comparaison
+            // session_id entre pending_emails.json._meta et state.json generait
+            // des faux positifs permanents (sort-mails ecrit un UUID custom,
+            // lib.state un timestamp). Le polling 3s + le rechargement a chaque
+            // switchSubdir + le verrou visuel pendant un cycle suffisent a
+            // garantir la coherence visible. La normalisation des session_id
+            // est reportee en Phase 6 (voir CHANGELOG alpha.8).
 
             useEffect(() => {
                 if (isDark) document.documentElement.classList.add('dark');
@@ -434,25 +425,7 @@
                 setActiveSubdir(subdirKey);
                 setSelectedMail(null);
                 setExpandedCard(null);
-                setStalenessDismissed(false);
                 if (rootHandle) loadSubdirEmails(rootHandle, subdirKey);
-            };
-
-            const reloadStaleCategory = async () => {
-                if (!rootHandle) return;
-                setStalenessDismissed(true);
-                try {
-                    await Promise.all([
-                        loadSubdirEmails(rootHandle, activeSubdir, { preserveUi: true }),
-                        loadAllCounts(rootHandle),
-                        readWorkspaceState(rootHandle).then(s => s && setWorkspaceState(s)),
-                        readInvalidateStamp(rootHandle).then(st => st && setInvalidateStamp(st)),
-                    ]);
-                    showToast('refreshed');
-                } catch (err) {
-                    console.error(err);
-                    showToast('error');
-                }
             };
 
             // ========== PHASE 5 — Polling 3s sur .todomail-state.json + dashboard_invalidate.txt ==========
@@ -1278,24 +1251,6 @@
                                                 Verrou actif : <span className="font-mono">{activeLock}</span>. Les actions sont désactivées jusqu'à la fin du cycle.
                                             </div>
                                         </div>
-                                    </div>
-                                )}
-
-                                {rootHandle && activeView === "categorization" && isStale && (
-                                    <div className="mb-4 bg-amber-50 dark:bg-amber-900/20 border-l-4 border-amber-500 rounded-r-2xl p-4 flex items-center gap-3 animate-slide-up">
-                                        <div className="text-amber-600"><Icon name="alert-triangle" size={20} /></div>
-                                        <div className="flex-1">
-                                            <div className="font-bold text-sm text-amber-900 dark:text-amber-200">Données obsolètes</div>
-                                            <div className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
-                                                Cette catégorie a été chargée depuis une session précédente.
-                                            </div>
-                                        </div>
-                                        <button
-                                            onClick={reloadStaleCategory}
-                                            className="text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg transition-colors"
-                                        >
-                                            Recharger
-                                        </button>
                                     </div>
                                 )}
 
