@@ -402,12 +402,20 @@
                         }
                     } catch (_) {}
                     setInstructionsMeta(loadedInstrMeta);
+                    const hadInstructionsFile = Object.keys(loadedDecisions).length > 0 || loadedInstrMeta !== null;
                     emails.forEach(e => {
                         if (!loadedDecisions[e.id]) loadedDecisions[e.id] = defAction;
                     });
                     setDecisions(loadedDecisions);
-                    // Phase 5 : plus d'auto-ecriture systematique au chargement.
-                    // Premiere action utilisateur -> premiere ecriture.
+                    // Phase 5 : ecriture initiale conditionnelle. On n'ecrit
+                    // les decisions par defaut que si le fichier est absent (ou
+                    // vide) — pour que /process-todo ait quelque chose a traiter
+                    // meme si l'utilisateur ne touche a rien. Si un instructions.json
+                    // existe deja (ecrit par un cycle precedent ou par Claude),
+                    // on ne l'ecrase pas.
+                    if (!hadInstructionsFile && emails.length > 0 && !isLocked) {
+                        writeInstructions(handle, subdirKey, emails, loadedDecisions);
+                    }
                 } catch (err) {
                     setEmails([]);
                     setPendingMeta(null);
