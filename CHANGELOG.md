@@ -7,6 +7,29 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.0.0-alpha.5] - 2026-04-18
+
+### Ajouté — Refactoring v2 Phase 4
+
+- 5 hooks Claude Code livrés avec le plugin, configurés dans `hooks/hooks.json` :
+  - **`SessionStart`** → `hooks/session_start.py` : vérifie les répertoires standards, compile un index léger de la mémoire (`memory/people/`, `memory/projects/`, `memory/context/`) dans `${CLAUDE_PLUGIN_DATA}/memory_cache.json`, lit `state.json` et signale toute reprise nécessaire (`active_lock`, erreurs en attente, répertoires manquants) via `hookSpecificOutput.additionalContext`.
+  - **`PreToolUse(Write|Edit)`** → `hooks/enforce_classify.py` : garde-fou structurel qui refuse toute écriture sous `docs/` hors de `docs/AURA/` ou `docs/MIN/` (règle `skills/classify-attachment/SKILL.md`). Émet un `permissionDecision: "deny"` structuré avec message explicite.
+  - **`PostToolUse(Bash)`** → `hooks/invalidate_dashboard_cache.py` : filtré par `if: "Bash(mv *)"` et `if: "Bash(rm *)"`, touche `$CLAUDE_PROJECT_DIR/dashboard_invalidate.txt` et incrémente `state.counters.modifications` quand la commande affecte `todo/`, `inbox/` ou `mails/`. Signal préparatoire au polling du dashboard v3 (Phase 5).
+  - **`UserPromptSubmit`** → `hooks/inject_context.py` : injecte silencieusement un résumé compact du `state.json` (`phase | lock | erreurs`) avant chaque prompt utilisateur uniquement si pertinent.
+  - **`PreCompact`** → `hooks/pre_compact.py` : sauvegarde un snapshot horodaté du `state.json` et des derniers checkpoints dans `${CLAUDE_PLUGIN_DATA}/precompact_snapshot_<ts>.json` (rotation : 10 plus récents).
+- `hooks/tests/test_hooks.sh` : 18 tests manuels couvrant deny/allow du garde-fou, no-op/touch du signal dashboard, silence de l'injection contextuelle, snapshot PreCompact, robustesse à un stdin vide, validité JSON de `hooks.json`.
+- `hooks/README.md` entièrement réécrit : rôle de chaque hook, payload stdin, sortie JSON, timeouts, désactivation, smoke-test Claude Desktop, limitations connues.
+
+### Notes
+
+- **Format stdin JSON, pas env vars** : conforme au format officiel Claude Code 2.1+. Chaque hook lit son payload via `json.load(sys.stdin)` et sort une décision structurée (`hookSpecificOutput`) sur stdout plutôt que de s'appuyer sur des exit codes sensibles.
+- **Graceful degradation** : tous les hooks encapsulent `main()` dans un `try/except Exception: pass` global et terminent en exit 0 en cas d'erreur inattendue. Seul `enforce_classify` émet une décision de refus (via JSON, jamais via crash).
+- **Persistance via `${CLAUDE_PLUGIN_DATA}`** : `memory_cache.json` et les snapshots PreCompact survivent aux updates de plugin (Claude Desktop recopie `${CLAUDE_PLUGIN_ROOT}` à chaque installation, mais préserve `${CLAUDE_PLUGIN_DATA}`).
+- **Signal dashboard dans `$CLAUDE_PROJECT_DIR`** : `dashboard_invalidate.txt` reste à la racine du projet utilisateur, compatible avec le hotfix `extractEmails` et prêt pour le polling 3 s prévu en Phase 5.
+- **Smoke-test Claude Desktop activable** : créer `.hooks_debug` à la racine du projet pour que `session_start.py` journalise ses déclenchements dans `${CLAUDE_PLUGIN_DATA}/.hooks_fired.log`.
+
+---
+
 ## [2.0.0-alpha.4] - 2026-04-17
 
 ### ⚠️ BREAKING — Refactoring v2 Phase 3
