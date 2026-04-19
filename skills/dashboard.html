@@ -357,12 +357,36 @@
 
             const reconnectPending = async () => {
                 if (!pendingHandle) return;
+                // Tentative 1 : requestPermission silencieux. Marche tant que
+                // Chromium memorise encore la permission de la session
+                // precedente. Mais apres fermeture de l'onglet, le retour
+                // peut etre 'prompt' ou 'denied' sans afficher de dialog
+                // (bug connu Chromium sur les handles persistes via IndexedDB).
+                let granted = false;
                 try {
                     const perm = await pendingHandle.requestPermission({ mode: 'readwrite' });
-                    if (perm === 'granted') {
-                        await bootstrapHandle(pendingHandle);
+                    granted = (perm === 'granted');
+                } catch (err) { console.warn('requestPermission failed:', err); }
+                if (granted) {
+                    await bootstrapHandle(pendingHandle);
+                    return;
+                }
+                // Tentative 2 : fallback picker pre-pointe sur le dossier
+                // memorise. L'utilisateur doit re-confirmer en un clic, mais
+                // n'a pas a re-naviguer dans son arborescence. La transient
+                // user activation du clic « Reprendre la connexion » est
+                // toujours valide (~5s) pour cet appel.
+                try {
+                    const handle = await window.showDirectoryPicker({
+                        mode: 'readwrite',
+                        startIn: pendingHandle,
+                    });
+                    await bootstrapHandle(handle);
+                } catch (err) {
+                    if (err && err.name !== 'AbortError') {
+                        console.error('reconnect picker failed:', err);
                     }
-                } catch (err) { console.error(err); }
+                }
             };
 
             const forgetWorkspace = async () => {
