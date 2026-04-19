@@ -344,11 +344,11 @@
             const connectFolder = async () => {
                 if (!browserSupported) return;
                 try {
-                    // startIn: handle deja memorise (meme invalide) aide le picker
-                    // a pointer vers le bon dossier a l'ouverture suivante.
-                    const opts = { mode: 'readwrite' };
-                    if (pendingHandle) opts.startIn = pendingHandle;
-                    const handle = await window.showDirectoryPicker(opts);
+                    // En mode file://, startIn avec un handle d'une origine
+                    // precedente fait planter le picker (ne resout jamais).
+                    // On omet donc startIn — l'utilisateur navigue depuis le
+                    // dossier par defaut.
+                    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
                     await bootstrapHandle(handle);
                 } catch (err) {
                     if (err && err.name !== 'AbortError') console.error(err);
@@ -356,27 +356,32 @@
             };
 
             const reconnectPending = async () => {
-                console.log('[todomail] reconnectPending click, pendingHandle?', !!pendingHandle);
+                console.log('[todomail] reconnectPending START, pendingHandle?', !!pendingHandle);
                 if (!pendingHandle) return;
-                // Approche directe : showDirectoryPicker pre-pointe sur le
-                // dossier memorise. Plus fiable que requestPermission qui peut
-                // echouer silencieusement sur les handles persistes apres
-                // fermeture d'onglet (bug Chromium connu). L'utilisateur voit
-                // un dialog mais a deja le bon dossier selectionne — un clic
-                // « Selectionner » suffit.
+                // En mode file://, chaque chargement de page est une origine
+                // unique. Donc `startIn: pendingHandle` (handle issu d'IndexedDB
+                // d'une origine precedente) cause un picker qui ouvre puis ne
+                // resout jamais (bug constate via DevTools). On l'omet pour
+                // garantir que le picker fonctionne correctement.
+                let handle;
                 try {
-                    const handle = await window.showDirectoryPicker({
-                        mode: 'readwrite',
-                        startIn: pendingHandle,
-                    });
-                    console.log('[todomail] picker returned handle, bootstrapping...');
-                    await bootstrapHandle(handle);
+                    console.log('[todomail] calling showDirectoryPicker (no startIn)...');
+                    handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+                    console.log('[todomail] picker resolved with handle:', handle && handle.name);
                 } catch (err) {
-                    if (err && err.name !== 'AbortError') {
-                        console.error('[todomail] reconnect picker failed:', err);
-                    } else {
-                        console.log('[todomail] picker aborted by user');
-                    }
+                    console.warn('[todomail] picker threw:', err && err.name, err && err.message);
+                    return;
+                }
+                if (!handle) {
+                    console.warn('[todomail] picker returned no handle');
+                    return;
+                }
+                try {
+                    console.log('[todomail] calling bootstrapHandle...');
+                    await bootstrapHandle(handle);
+                    console.log('[todomail] bootstrapHandle done');
+                } catch (err) {
+                    console.error('[todomail] bootstrapHandle failed:', err);
                 }
             };
 
