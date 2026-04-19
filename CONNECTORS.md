@@ -36,7 +36,7 @@ Le plugin s'appuie sur un connecteur MCP  (`~~todomail-mcp`) qui fournit les too
 - `get_availability` — Calcul des créneaux libres (fusion d'intervalles, heures ouvrables configurables)
 - `sync_calendars` — Rafraîchissement des flux ICS (tâche de fond)
 
-Ces tools sont utilisés par les skills `sort-mails`, `agenda`, `disponibilites`, `detection-conflits`, par la commande `/process-todo`, et par les commandes `/briefing` et `/check-agenda`. L'agent `mail-prefilter` n'accède pas au MCP (il opère sur les seules métadonnées).
+Ces tools sont utilisés par les skills `sort-mails`, `agenda`, `disponibilites`, `detection-conflits`, par les commandes `/process-todo`, `/briefing`, `/check-agenda`, et par les wrappers skills auto-déclenchables `briefing` et `check-agenda`. L'agent `mail-prefilter` n'accède pas au MCP (il opère sur les seules métadonnées).
 
 **Note :** Le plugin est en **lecture seule** sur les agendas. Aucune modification, création ou suppression d'événement n'est effectuée.
 
@@ -44,21 +44,24 @@ Ces tools sont utilisés par les skills `sort-mails`, `agenda`, `disponibilites`
 
 Les tools sont utilisés directement ou indirectement (via des skills ou des agents) par les composants suivants. Les appels indirects sont marqués par `(i)`.
 
-| Tool | sort-mails | process-todo | agenda | disponibilites | detection-conflits | /check-inbox | /briefing | /check-agenda | /start |
-|------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| `check_inbox` | | | | | | ✓ | | | |
-| `update_index` | | | | | | ✓ | | | |
-| `search_mail` | ✓ | ✓ | ✓ | | | (i) | ✓ | | ✓ |
-| `search_doc` | ✓ | ✓ | ✓ | | | (i) | ✓ | | ✓ |
-| `search_all` | ✓ | ✓ | ✓ | | | (i) | ✓ | | ✓ |
-| `list_calendars` | | | ✓ | | | | | | ✓ |
-| `fetch_calendar_events` | ✓ | ✓ | ✓ | ✓ | | | (i) | (i) | ✓ |
-| `get_availability` | ✓ | ✓ | | ✓ | | | (i) | (i) | |
-| `sync_calendars` | | | ✓ | | | | | | ✓ |
+| Tool | sort-mails | process-todo | agenda | disponibilites | detection-conflits | /check-inbox | /briefing | /check-agenda | briefing (skill) | check-agenda (skill) | /start |
+|------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| `check_inbox` | | | | | | ✓ | | | | | |
+| `update_index` | | | | | | ✓ | | | | | |
+| `search_mail` | ✓ | ✓ | ✓ | | | (i) | ✓ | | (i) | | ✓ |
+| `search_doc` | ✓ | ✓ | ✓ | | | (i) | ✓ | | (i) | | ✓ |
+| `search_all` | ✓ | ✓ | ✓ | | | (i) | ✓ | | (i) | | ✓ |
+| `list_calendars` | | | ✓ | | | | | | | | ✓ |
+| `fetch_calendar_events` | ✓ | ✓ | ✓ | ✓ | | | (i) | ✓ | (i) | (i) | ✓ |
+| `get_availability` | ✓ | ✓ | | ✓ | | | | ✓ | | (i) | |
+| `sync_calendars` | | | ✓ | | | | | | | | ✓ |
+| `status` | | | | | | ✓ | ✓ | ✓ | | | ✓ |
 
-**Légende :** ✓ = appel direct du tool MCP | (i) = appel indirect via un skill intermédiaire (`/check-inbox` délègue à `sort-mails` ; `/briefing` et `/check-agenda` appellent les skills `agenda`, `disponibilites`, `detection-conflits`).
+**Légende :** ✓ = appel direct du tool MCP | (i) = appel indirect via un skill intermédiaire (`/check-inbox` délègue à `sort-mails` ; `/briefing` et `/check-agenda` appellent les skills `agenda`, `disponibilites`, `detection-conflits` ; les wrappers skills `briefing` et `check-agenda` délèguent aux commandes homonymes).
 
-**Nouveauté v2.0.0-alpha.4 :** Depuis la refonte de `process-todo` (Phase 3), l'agent `todo-processor` est supprimé et les appels MCP sont directs depuis la commande (contexte principal Opus 4.6 1M). Les résultats sont mémoïsés via `lib/rag_cache.py` (obligatoire sur tous les appels `search_*`, `get_availability`, `fetch_calendar_events`). L'agent `mail-prefilter` n'apparaît pas car il n'accède pas au MCP.
+**Refonte v2.0.0 (Phases 2/3/6) :** Les agents `mail-analyzer` (Phase 2) et `todo-processor` (Phase 3) ont été supprimés. La logique est intégrée directement dans les commandes/skills, en exploitant le contexte 1M d'Opus 4.6. Les résultats MCP sont mémoïsés via `lib/rag_cache.py` (obligatoire sur tous les appels `search_*`, `get_availability`, `fetch_calendar_events`). L'agent `mail-prefilter` n'apparaît pas car il n'accède pas au MCP (métadonnées seulement). Le tool `status` est appelé par toutes les commandes MCP-sensibles pour la désambiguation multi-serveurs (voir section plus bas).
+
+**Wrappers skills (Phase 6) :** Les skills auto-déclenchables `briefing` et `check-agenda` ne portent aucune logique propre : ils délèguent aux commandes `/briefing` et `/check-agenda`. Les appels MCP listés avec `(i)` le sont indirectement via cette délégation.
 
 Le connecteur RAG permet notamment de :
 

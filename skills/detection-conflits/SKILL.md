@@ -10,7 +10,7 @@ description: >
   and detects simultaneous events, or when a mail confirms a meeting
   and Claude needs to check for conflicts.
 allowed-tools: Read, Glob, Grep, mcp
-version: 1.0.0
+version: 2.0.0
 ---
 
 # Détection de conflits — Incohérences agenda
@@ -19,6 +19,16 @@ Ce skill détecte les conflits, superpositions et incohérences dans
 l'agenda de l'utilisateur. C'est une brique d'analyse que Claude
 mobilise de façon proactive ou qui est orchestrée par d'autres
 composants (skill `agenda`, commande `/check-agenda`).
+
+## Cache RAG partagé (v2.0.0)
+
+Ce skill ne fait pas d'appel MCP direct : il analyse une liste
+d'événements déjà chargée par l'appelant. En revanche, le calcul des
+temps de déplacement peut nécessiter un `search_mail` ou `search_doc`
+sur un lieu inconnu — ces appels doivent passer par le `RagCache`
+partagé de la session (`lib/rag_cache.py`) quand le skill est appelé
+depuis une commande qui l'a instancié (`/check-agenda`, `/briefing`,
+`sort-mails`).
 
 ## Déclenchement
 

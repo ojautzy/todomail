@@ -7,14 +7,25 @@ Plugin Claude Code : skills, agents et commandes pour le traitement des emails e
 ```
 todomail/
 ├── .claude-plugin/plugin.json   ← manifeste du plugin (source de vérité pour la version)
-├── commands/*.md                ← commandes utilisateur (/start, /check-inbox, etc.)
+├── commands/*.md                ← commandes utilisateur (/start, /check-inbox, /process-todo, /briefing, /check-agenda)
 ├── agents/*.md                  ← agents autonomes (mail-prefilter)
-├── skills/*/SKILL.md            ← skills (sort-mails, agenda, etc.)
+├── skills/*/SKILL.md            ← skills (sort-mails, agenda, disponibilites, detection-conflits, briefing, check-agenda, memory-management, classify-attachment, read-odf)
+├── skills/dashboard.html        ← dashboard interactif (copié dans le workspace par /start)
+├── hooks/                       ← 5 hooks Claude Code + hooks.json (session_start, enforce_classify, invalidate_dashboard_cache, inject_context, pre_compact)
+├── lib/                         ← 5 helpers Python (state, fs_utils, rag_cache, error_modes, config)
 ├── CHANGELOG.md                 ← historique des versions
 ├── CONNECTORS.md                ← documentation des connecteurs MCP
 ├── README.md                    ← documentation principale
 └── README.dashboard.md          ← documentation technique du dashboard
 ```
+
+## Runtime du plugin dans le workspace utilisateur
+
+Depuis alpha.8 (Phase 5), tout l'état runtime pour un workspace vit dans `$CLAUDE_PROJECT_DIR/.todomail/` (state.json, memory_cache.json, invalidate.txt, hooks.log, retry_request.txt, errors_dismiss.txt, precompact_snapshot_*.json). Plus d'écritures dans `$CLAUDE_PLUGIN_DATA` côté plugin — c'était un mauvais fit pour des données spécifiques au workspace (isolation naturelle multi-workspace, plus de mirror à synchroniser).
+
+Le fichier `.todomail-config.json` (racine du workspace, géré par `/start`) stocke `expected_rag_name` pour désambiguer quand plusieurs serveurs MCP archiva sont connectés dans Claude Desktop. Vérifié en début de toutes les commandes MCP-sensibles (`/check-inbox`, `/process-todo`, `/briefing`, `/check-agenda`).
+
+**Ne jamais recréer `.mcp.json`** : retiré en alpha.2 car inadapté à Claude Desktop (connexions dupliquées, proxy stdio inopérant).
 
 ## Gestion des versions
 
@@ -66,8 +77,12 @@ Le repertoire `lib/` contient des helpers Python partages par les skills et comm
 - `lib/error_modes.py` — strategie d'erreur (`lenient`/`strict`/`resume`)
 - `lib/config.py` — lecture/ecriture du `.todomail-config.json` (config workspace, desambiguation serveur MCP)
 
-Ces helpers seront exploites par les skills et commandes a partir de la Phase 2 du refactoring.
+Ces helpers sont exploités par toutes les commandes et tous les skills du plugin depuis les Phases 2 à 6.
 Voir `lib/README.md` pour la documentation complete.
+
+### Verrou obligatoire pour toute commande qui modifie le state
+
+Toute commande ou skill qui modifie le filesystem ou `state.json` (`sort-mails`, `/process-todo`, `/briefing`, `/check-agenda`) DOIT appeler `acquire_lock(name)` au début et `release_lock()` à la fin (via `try/finally`). Sans lock, le dashboard n'affiche pas la bannière bleue « Claude travaille… » et `state.json.checkpoints` reste vide. Pattern canonique : blocs Python concrets en étape 0 et étape de finalisation (voir `commands/process-todo.md` pour le modèle de référence).
 
 ### Import Python depuis les skills/commandes (regle imperative)
 
@@ -91,4 +106,4 @@ PY
 
 **Anti-pattern a ne jamais reproduire** : si un `import lib.X` renvoie `ModuleNotFoundError`, **ne pas** conclure « pas de lib externe, analyse directe en flux ». C'est un bug d'import, pas une caracteristique du skill. Verifier que `CLAUDE_PLUGIN_ROOT` est bien defini (`env | grep CLAUDE`), fixer le `sys.path` et retenter. Les helpers sont indispensables — sans `acquire_lock`/`save_state`, le dashboard ne voit pas le cycle et l'idempotence (`safe_mv`) n'est pas garantie.
 
-Tout nouveau SKILL.md ou command.md qui touche `lib/` doit embarquer ce pattern en preambule explicite (voir `skills/sort-mails/SKILL.md`, `commands/check-inbox.md`, `commands/process-todo.md`).
+Tout nouveau SKILL.md ou command.md qui touche `lib/` doit embarquer ce pattern en preambule explicite (voir `skills/sort-mails/SKILL.md`, `commands/check-inbox.md`, `commands/process-todo.md`, `commands/briefing.md`, `commands/check-agenda.md`).

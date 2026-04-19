@@ -293,14 +293,25 @@
                 setCounts(newCounts);
             };
 
-            // Garantit qu'un instructions.json existe pour chaque categorie non
-            // vide, ecrit avec les decisions par defaut (delete pour trash,
-            // other pour les autres). Sans cela, /process-todo ne traite que
-            // les categories ouvertes par l'utilisateur dans le dashboard
-            // (les loadSubdirEmails n'etant declenche que sur switchSubdir).
-            // Idempotent : ne touche jamais un instructions.json existant.
-            const ensureAllInstructions = async (handle) => {
-                if (isLocked) return; // ne pas ecrire pendant qu'un cycle Claude tourne
+            // Garantit qu'une decision par defaut existe pour CHAQUE mail de
+            // CHAQUE categorie non vide. Sans cela, /process-todo ne traite
+            // que les mails que l'utilisateur a touches explicitement dans le
+            // dashboard. Deux pieges corriges en v2.0.1 :
+            //   1. Le lock frais est passe en parametre (`lockedNow`) parce
+            //      que `isLocked` lu via closure React est stale pendant le
+            //      tick de polling qui detecte `lockReleased` (setState pas
+            //      encore propage). Utiliser la closure entrainait un early
+            //      return a chaque fin de cycle sort-mails.
+            //   2. Au lieu de skipper sur existence du fichier, on lit
+            //      instructions.json existant et on AJOUTE uniquement les
+            //      mails manquants avec l'action par defaut. Process-todo
+            //      vide `instructions: []` en fin de cycle — sans cette
+            //      fusion, les mails ajoutes au cycle suivant seraient
+            //      ignores parce que le fichier existerait encore.
+            // Idempotent : ne reecrit que si au moins un mail est ajoute,
+            // preserve les decisions deja prises par l'utilisateur.
+            const ensureAllInstructions = async (handle, { lockedNow } = {}) => {
+                if (lockedNow) return; // ne pas ecrire pendant qu'un cycle Claude tourne
                 for (const subdir of SUBDIRS) {
                     try {
                         const todoDir = await handle.getDirectoryHandle('todo');
@@ -313,15 +324,30 @@
                         } catch (_) { continue; }
                         const { emails } = extractEmailsAndMeta(pendingData);
                         if (emails.length === 0) continue;
-                        // Ne pas ecraser un instructions.json existant
-                        try {
-                            await categoryDir.getFileHandle('instructions.json');
-                            continue; // existe deja, skip
-                        } catch (_) { /* absent, on va l'ecrire */ }
+
                         const defAction = subdir.key === 'trash' ? 'delete' : 'other';
-                        const defaults = {};
-                        emails.forEach(e => { defaults[e.id] = defAction; });
-                        await writeInstructions(handle, subdir.key, emails, defaults);
+                        // Lire instructions.json existant (tolerant a l'absence)
+                        const existingMap = {};
+                        try {
+                            const iFh = await categoryDir.getFileHandle('instructions.json');
+                            const iData = JSON.parse(await (await iFh.getFile()).text());
+                            const { instructions: list } = extractInstructionsAndMeta(iData);
+                            list.forEach(inst => {
+                                if (inst && inst.id) existingMap[inst.id] = inst.action;
+                            });
+                        } catch (_) { /* absent, on part de zero */ }
+
+                        // Fusion : ajouter les mails manquants sans ecraser l'existant
+                        let added = 0;
+                        emails.forEach(e => {
+                            if (existingMap[e.id] == null) {
+                                existingMap[e.id] = defAction;
+                                added++;
+                            }
+                        });
+                        if (added > 0) {
+                            await writeInstructions(handle, subdir.key, emails, existingMap);
+                        }
                     } catch (_) { /* categorie absente, skip */ }
                 }
             };
@@ -332,12 +358,18 @@
                 loadSubdirEmails(handle, activeSubdir);
                 loadAllCounts(handle);
                 loadTaskCounts(handle);
-                readWorkspaceState(handle).then(s => s && setWorkspaceState(s));
+                // Lire le state de maniere synchrone pour connaitre le lock
+                // actuel avant d'appeler ensureAllInstructions (evite la
+                // closure stale decrite plus bas).
+                const initialState = await readWorkspaceState(handle);
+                if (initialState) setWorkspaceState(initialState);
                 readInvalidateStamp(handle).then(st => st && setInvalidateStamp(st));
                 // Ecrit les instructions.json par defaut pour toutes les categories
                 // non vides qui n'en ont pas — process-todo doit pouvoir traiter
                 // les mails meme sans interaction utilisateur dans le dashboard.
-                ensureAllInstructions(handle);
+                ensureAllInstructions(handle, {
+                    lockedNow: !!(initialState && initialState.active_lock),
+                });
                 await saveHandle(handle);
             };
 
@@ -546,7 +578,10 @@
                 // qu'un instructions.json par defaut existe pour les nouvelles
                 // categories non vides — sans cela le prochain process-todo
                 // ignorerait les nouveaux mails.
-                ensureAllInstructions(handle);
+                // `opts.lockedNow` est transmis par le tick de polling et
+                // reflete le lock frais — on ne peut pas se fier a `isLocked`
+                // de la closure (setState pas encore propage dans le meme tick).
+                ensureAllInstructions(handle, { lockedNow: !!opts.lockedNow });
                 if (opts.withToast) showToast('refreshed');
             };
 
@@ -580,7 +615,12 @@
                     if (stamp) setInvalidateStamp(stamp);
 
                     if (stampChanged || sessionChanged || lockReleased || errorsChanged) {
-                        try { await refreshAll(rootHandle, { withToast: lockReleased }); } catch (_) {}
+                        try {
+                            await refreshAll(rootHandle, {
+                                withToast: lockReleased,
+                                lockedNow: !!newLock,
+                            });
+                        } catch (_) {}
                     }
 
                     prevStamp = stamp || prevStamp;
