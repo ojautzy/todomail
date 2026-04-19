@@ -7,6 +7,75 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.0.0] - 2026-04-19
+
+Release consolidée du refactoring v2.0 vers Claude Code (Opus 4.6 1M). Cette release consolide les 8 pré-releases `2.0.0-alpha.1` à `2.0.0-alpha.8` en une seule note complète. Les entrées alpha détaillées sont conservées ci-dessous pour la traçabilité.
+
+### Ajouté
+
+- **Architecture orientée contexte 1M** — Exploitation d'Opus 4.6 1M partout où c'est pertinent (`sort-mails`, `/process-todo`, `/briefing`, `/check-agenda`) : analyse et finalisation en flux, plus d'isolation systématique par agent, réduction massive du nombre d'appels Task.
+- **Hooks Claude Code (5)** — `session_start.py` (warm-up mémoire, signalement reprise), `enforce_classify.py` (garde-fou `docs/AURA|MIN` en `PreToolUse`), `invalidate_dashboard_cache.py` (notification polling en `PostToolUse`), `inject_context.py` (résumé state en `UserPromptSubmit`), `pre_compact.py` (snapshot anti-compaction).
+- **Helpers Python `lib/` (5)** — `state.py` (state.json persistant, verrous, registre d'erreurs), `fs_utils.py` (idempotence, JSON v2), `rag_cache.py` (cache MCP de session), `error_modes.py` (lenient/strict/resume), `config.py` (désambiguation `.todomail-config.json`).
+- **Dashboard v3** — Polling 3s sur `.todomail/state.json` et `.todomail/invalidate.txt`, verrou visuel pendant un cycle, panneau d'erreurs avec boutons retry/dismiss, vue Mémoire (édition CLAUDE.md + memory/), reconnexion auto via IndexedDB.
+- **Mode batch opt-in `/process-todo --batch-validate`** — Validation en bloc des propositions interactives (par défaut séquentiel, un mail à la fois).
+- **Flag `--retry` (check-inbox, process-todo)** — Retraite uniquement les mails inscrits dans `state.errors[]` via `lib.state.get_pending_errors()`.
+- **Flag `--strict` (check-inbox, process-todo, sort-mails)** — Arrêt à la première erreur avec demande utilisateur.
+- **Wrappers skills auto-déclenchables (Phase 6)** — `skills/briefing/SKILL.md` et `skills/check-agenda/SKILL.md` : délèguent aux commandes homonymes et se déclenchent sur des phrases naturelles (« prépare la réunion COPIL », « audite mon agenda »). Les commandes slash `/briefing` et `/check-agenda` restent strictement disponibles et inchangées dans leur invocation.
+- **Désambiguation MCP `.todomail-config.json` (alpha.2)** — Config workspace avec `expected_rag_name`, vérification runtime via `status.rag_name` en début de `/check-inbox`, `/process-todo`, `/briefing`, `/check-agenda`.
+- **Runtime du plugin dans `$CLAUDE_PROJECT_DIR/.todomail/` (alpha.8)** — state.json, memory_cache.json, invalidate.txt, hooks.log, retry_request.txt, errors_dismiss.txt, precompact_snapshot_*.json. Plus d'écritures dans `$CLAUDE_PLUGIN_DATA` côté plugin (mauvais fit pour des données workspace-spécifiques).
+- **Schéma JSON v2** — `pending_emails.json` et `instructions.json` wrappés `{_meta, emails|instructions}` avec `schema_version`, `session_id`, `generated_at` ; rétrocompatibilité v1 en lecture (Python `lib.fs_utils.read_v2_json`, JS `extractEmails(data)`).
+- **Cache RAG partagé** — `lib/rag_cache.py` instancié par chaque commande long cycle, évite les appels MCP redondants quand plusieurs mails/réunions partagent des participants ou des sujets.
+- **Pré-filtrage Haiku 4.5** — Agent `mail-prefilter` classifie les évidences (newsletters, accusés) à partir des seules métadonnées, en un seul appel batch, avant l'analyse principale Opus 1M.
+
+### Modifié
+
+- **`sort-mails` refondu** (Phase 2, alpha.3) — Analyse en flux dans le contexte principal, plus d'agent `mail-analyzer`, pré-filtrage Haiku + cache RAG intégrés, idempotence via `lib/fs_utils.py`.
+- **`/process-todo` refondu** (Phase 3, alpha.4) — Fusion des phases analyze/validate/finalize, plus d'agent `todo-processor`, séquentiel par défaut, `--batch-validate` strictement opt-in.
+- **`/briefing` refondu** (Phase 6) — Vérification MCP préalable, verrou `acquire_lock("briefing")`, un seul appel 1M par défaut, fan-out `--parallel` opt-in au-delà de 5 réunions.
+- **`/check-agenda` refondu** (Phase 6) — Vérification MCP préalable, verrou `acquire_lock("check-agenda")`, un seul appel 1M pour tout l'audit, cache RAG sur les recherches contextuelles.
+- **Skills agenda bumpés à 2.0.0** (Phase 6) — `agenda`, `disponibilites`, `detection-conflits` alignés sur le cache RAG partagé ; aucun changement de logique métier (déjà bien découpés).
+
+### Corrigé (hotfixes post-merge)
+
+- **Dashboard rétrocompat v1/v2** (alpha.3, post-merge Phase 2) — Helpers `extractEmails(data)` et équivalent pour `instructions.json` ajoutés dans `skills/dashboard.html`. Sans ce hotfix, les `pending_emails.json` v2 faisaient échouer un `data.forEach` JS (écran blanc). Pattern conservé et étendu en Phase 5 (`extractEmailsAndMeta`).
+- **Rollback wrapper `_run.sh`** (alpha.6 → alpha.7, Phase 4) — Un wrapper shell ajouté en alpha.6 sur un faux diagnostic PATH a été retiré en alpha.7 après analyse des logs `.hooks_fired.log` : le PATH hérité par les hooks Claude Desktop contenait déjà `/opt/homebrew/bin`. La vraie cause d'absence de logs en alpha.5 était l'init paresseux du runtime Claude Code (aucune commande du plugin invoquée pendant la session de test). Enseignement : ne jamais patcher un symptôme sans diagnostic explicite.
+- **Polling dashboard fiabilisé** (alpha.8, correctifs pré-merge Phase 5) — `lib/state.py.save_state()` touche désormais `invalidate.txt` à chaque écriture d'état (les skills bougent les fichiers via Python, le hook `PostToolUse Bash(mv|rm)` ne suffit pas comme signal exclusif). Retrait du banner « Données obsolètes » qui produisait des faux positifs permanents (divergence UUID/timestamp entre sort-mails et lib.state).
+- **Préambule `PYTHONPATH` documenté partout** (alpha.8) — Sans ce préambule, `import lib.X` échouait, le LLM concluait « pas de lib externe », et tournait sans `acquire_lock`/`save_state`. Pattern canonique Python désormais en préambule de tous les SKILL.md et command.md qui importent `lib/*` (enseignement critique à conserver).
+- **`acquire_lock`/`release_lock` rendus obligatoires même pour petits volumes** (alpha.8) — `/process-todo` zappait l'étape 0 sur 1 seul mail → pas de verrou, pas de bannière bleue. Étapes 0 et 6 renforcées avec blocs Python concrets copier-coller. Pattern propagé en Phase 6 à `/briefing` et `/check-agenda`.
+- **`ensureAllInstructions` côté dashboard** (alpha.8) — Fix critique : `/process-todo` ne traitait que les catégories visitées par l'utilisateur dans le dashboard. Nouvelle fonction idempotente écrit les `instructions.json` par défaut pour les 7 catégories à chaque connexion/reconnexion.
+- **Découverte auto `CLAUDE_PROJECT_DIR` dans `lib/state.py`** (alpha.8) — Les sous-processus Python lancés depuis Bash n'héritaient pas de `$CLAUDE_PROJECT_DIR` dans certains contextes, faisant fall-back sur des chemins orphelins. `workspace_dir()` utilise désormais `$CLAUDE_PROJECT_DIR` OU un cwd contenant `.todomail-config.json`.
+- **Reconnexion dashboard via picker direct** (alpha.8) — `queryPermission` et `startIn: pendingHandle` étaient buggés en mode `file://` (origine unique par chargement). Bouton « Reprendre la connexion » utilise désormais un picker direct sans ces APIs.
+
+### Supprimé
+
+- **Agent `mail-analyzer`** (Phase 2, alpha.3) — Remplacé par l'analyse directe dans `sort-mails` (contexte 1M).
+- **Agent `todo-processor`** (Phase 3, alpha.4) — Remplacé par l'analyse directe dans `/process-todo` (contexte 1M).
+- **Fichier `.mcp.json`** (alpha.2) — Inadapté à Claude Desktop (connexions dupliquées). Remplacé par `.todomail-config.json` + vérification `status.rag_name` runtime.
+- **Wrapper `hooks/_run.sh`** (alpha.7) — Ajouté à tort en alpha.6, retiré après diagnostic.
+- **Toute référence `allow_cowork_file_delete`** (Phase 1) — Fork définitif Claude Code, compatibilité Cowork abandonnée.
+- **Banner « Données obsolètes » dashboard** (alpha.8) — Comparaison `session_id` UUID vs timestamp non réconciliable, faux positifs permanents. Polling 3s + reload sur `switchSubdir` + verrou visuel suffisent.
+
+### Reporté en v2.1.x
+
+- **Normalisation des `session_id`** entre `sort-mails` (UUID custom) et `lib/state.py` (format timestamp). Pas de bug fonctionnel — la bannière qui en dépendait a été retirée.
+- **Mode serveur HTTP local** (Phase 7) — Compatibilité Safari, Orion, Firefox via `lib/serve_dashboard.py` + nouvelle commande `/todomail:dashboard`. Élimine aussi les frictions `file://` (IndexedDB, permissions Chromium) pour les utilisateurs Chromium actuels.
+
+### Critères d'acceptation v2.0.0 (validés)
+
+- Les 3 skills agenda exploitent `lib/rag_cache.py`.
+- `/briefing` et `/check-agenda` ont la vérification préalable MCP (alpha.2).
+- `/briefing` et `/check-agenda` utilisent `acquire_lock`/`release_lock` (visible dans le dashboard via bannière bleue).
+- Les wrappers skills `briefing` et `check-agenda` existent et délèguent aux commandes homonymes (pas de duplication de logique).
+- Les commandes slash `/briefing` et `/check-agenda` restent strictement préservées dans leur invocation.
+- `plugin.json` en `2.0.0` sans suffixe alpha.
+- Aucun `.mcp.json` à la racine.
+- Les 5 helpers Python sont importables (`from lib import state, fs_utils, rag_cache, error_modes, config`).
+- Tests hooks `hooks/tests/test_hooks.sh` passent 19/19.
+- Le hotfix dashboard rétrocompat v1/v2 (`extractEmails`) est intact.
+- Limite navigateur (Chromium only) documentée dans README.md ; Safari/Orion/Firefox listés comme non supportés avec renvoi à Phase 7.
+
+---
+
 ## [2.0.0-alpha.8] - 2026-04-18
 
 ### Ajouté

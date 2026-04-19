@@ -1,6 +1,7 @@
 # Hooks TodoMail
 
 Hooks Claude Code livrés avec le plugin TodoMail (Phase 4, alpha.5+).
+État final v2.0.0 : 5 hooks, 19/19 tests (`bash hooks/tests/test_hooks.sh`).
 Leur rôle est d'automatiser ce qui était auparavant déclaratif (à la
 charge du LLM) : warm-up mémoire, garde-fou filesystem, invalidation
 du dashboard, injection contextuelle, anti-compaction.

@@ -10,7 +10,7 @@ description: >
   requests a meeting and Claude needs to check availability, or when
   the command /check-agenda needs to propose alternative slots.
 allowed-tools: Read, Write, Glob, Grep, mcp
-version: 1.0.0
+version: 2.0.0
 ---
 
 # Disponibilités — Connaissance des créneaux libres
@@ -19,6 +19,16 @@ Ce skill fournit à Claude la connaissance des disponibilités de
 l'utilisateur. C'est la deuxième brique fondamentale, utilisée
 intensivement par le traitement des mails liés à l'agenda et par
 la commande `/check-agenda`.
+
+## Cache RAG partagé (v2.0.0)
+
+Tous les appels MCP contextuels effectués par ce skill
+(`get_availability`, `fetch_calendar_events`) doivent passer par le
+`RagCache` partagé de la session (`lib/rag_cache.py`). Le cache est
+instancié par la commande appelante (`/check-agenda`, `sort-mails`) et
+évite les appels MCP redondants quand la même plage est interrogée
+plusieurs fois dans un même cycle (cas fréquent lors d'un audit agenda
+avec propositions de créneaux alternatifs pour plusieurs conflits).
 
 ## Déclenchement
 

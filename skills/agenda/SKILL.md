@@ -12,7 +12,7 @@ description: >
   "lundi", "demain") in a context where knowing the agenda would help,
   or when a mail references a calendar event.
 allowed-tools: Read, Write, Glob, Grep, AskUserQuestion, mcp
-version: 1.0.0
+version: 2.0.0
 ---
 
 # Agenda — Connaissance du programme
@@ -21,6 +21,17 @@ Ce skill fournit à Claude la connaissance du programme de l'utilisateur
 sur une période donnée. C'est la brique fondamentale utilisée chaque
 fois que Claude a besoin de savoir ce que fait l'utilisateur à un
 moment donné.
+
+## Cache RAG partagé (v2.0.0)
+
+Tous les appels MCP contextuels effectués par ce skill
+(`fetch_calendar_events`, `search_mail`, `search_doc`, `search_all`)
+doivent passer par le `RagCache` partagé de la session
+(`lib/rag_cache.py`). Le cache est instancié par la commande ou le
+skill appelant (`/briefing`, `/check-agenda`, `sort-mails`) et garantit
+qu'une même requête n'est pas rejouée deux fois dans le cycle courant.
+Cela divise typiquement par deux le nombre d'appels MCP quand plusieurs
+réunions partagent des participants ou des sujets.
 
 ## Déclenchement
 

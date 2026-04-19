@@ -1,12 +1,13 @@
 """Gestion du state.json persistant pour le plugin TodoMail.
 
 A partir de la v2.0.0-alpha.8 : tout l'etat runtime du plugin vit dans
-`$CLAUDE_PROJECT_DIR/.todomail/` (workspace utilisateur), pas dans
-`$CLAUDE_PLUGIN_DATA`. Decision motivee par le fait que toutes les donnees
-runtime du plugin sont specifiques au workspace (pas globales au plugin).
-Avantages : isolation naturelle entre workspaces, plus de mirror a
-synchroniser, plus de probleme de propagation des variables d'env aux
-sous-processus Python lances par les skills, debug facilite.
+`$CLAUDE_PROJECT_DIR/.todomail/` (workspace utilisateur), pas dans une
+variable globale plugin. Decision motivee par le fait que toutes les
+donnees runtime du plugin sont specifiques au workspace (pas globales
+au plugin). Avantages : isolation naturelle entre workspaces, plus de
+mirror a synchroniser, plus de probleme de propagation des variables
+d'env aux sous-processus Python lances par les skills, debug facilite.
+Cf. CHANGELOG alpha.8 pour le detail du refactor.
 """
 
 import json
