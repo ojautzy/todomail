@@ -13,9 +13,29 @@ L'application est une interface **"Human-in-the-loop"** (l'humain dans la boucle
 
 ## **2\. Prérequis**
 
-* **Navigateur :** Chrome, Edge ou Opera (moteurs Chromium) requis pour le support de l'API *File System Access*.
-* **Environnement :** Accès en lecture/écriture accordé par l'utilisateur sur le répertoire racine du projet lors de la connexion initiale (une seule autorisation pour toutes les catégories).
-* **Technologies :** React 18, Tailwind CSS, Lucide Icons (chargés via CDN pour une portabilité totale sans installation).
+### Navigateurs supportés
+
+Le dashboard utilise l'API **File System Access** pour lire et écrire directement dans le dossier de travail sans serveur backend. Cette API n'est disponible que dans les moteurs Chromium.
+
+| Navigateur | Support |
+|---|---|
+| Google Chrome, Microsoft Edge, Arc, DIA, Opera, Brave, Vivaldi | ✅ supporté |
+| Safari, Orion (moteurs WebKit — Apple refuse l'API) | ❌ non supporté |
+| Firefox | ❌ non supporté |
+
+Les navigateurs non supportés affichent un écran d'avertissement au chargement.
+
+Un **mode compatible universel** basé sur un micro-serveur HTTP local (commande plugin dédiée) est suivi dans l'issue *Phase 5.5* et permettra d'utiliser le dashboard dans Safari/Firefox à terme.
+
+### Environnement
+
+* **Accès en lecture/écriture** accordé par l'utilisateur sur le répertoire racine du projet lors de la connexion initiale (une seule autorisation pour toutes les catégories).
+* **Reconnexion automatique (alpha.8+)** : le `DirectoryHandle` est persisté via IndexedDB. Au prochain chargement du dashboard, si la permission n'a pas expiré côté navigateur, la connexion se refait silencieusement sans picker. Si elle a expiré, un bouton « Reprendre la connexion » permet de ré-autoriser en un clic, sans re-sélectionner le dossier.
+* **Bouton « Oublier ce projet »** à côté de l'indicateur « Projet connecté » pour invalider le handle persisté (utile si tu changes de workspace).
+
+### Technologies
+
+React 18, Tailwind CSS, Lucide Icons (chargés via CDN pour une portabilité totale sans installation).
 
 ## **3\. Structure du Répertoire de Travail**
 
@@ -73,7 +93,7 @@ Chaque fichier `pending_emails.json` est généré par Claude (étape 3 du skill
 - **v1 (legacy, jusqu'à la v1.4.1)** : tableau brut — `[ { ... }, { ... } ]`.
 - **v2 (alpha.3+)** : wrapper `{ "_meta": { "schema_version": 2, "session_id": "...", "generated_at": "..." }, "emails": [ ... ] }`.
 
-Le dashboard lit les deux formats de manière transparente (fonction `extractEmails(data)` qui renvoie toujours un tableau). Il continue à écrire le format v1 dans les `instructions.json`, la refonte complète du dashboard étant prévue en Phase 5 du refactoring v2.
+Le dashboard lit les deux formats de manière transparente (fonction `extractEmails(data)` qui renvoie toujours un tableau, et `extractEmailsAndMeta(data)` qui renvoie aussi le bloc `_meta` pour le banner de fraîcheur introduit en alpha.8). Il continue à écrire le format v1 dans les `instructions.json` ; la helper `extractInstructionsAndMeta(data)` permet de relire indifféremment v1 et v2.
 
 Les exemples ci-dessous présentent le contenu d'une entrée du tableau `emails` (v2) ou d'une entrée du tableau racine (v1) — les champs sont identiques :
 
@@ -154,11 +174,11 @@ Situé dans chaque sous-répertoire d'ID, il contient le contenu complet du mail
 
 Fichier généré et mis à jour automatiquement par le dashboard. Un fichier `instructions.json` est écrit dans le sous-répertoire de chaque catégorie contenant des mails. Ces fichiers sont ensuite consommés par le skill `process-todo` (commande `/todomail:process-todo`) qui exécute les actions correspondantes.
 
-**Comportement automatique (v1.0.0+) :**
-- Au chargement d'une catégorie, le dashboard lit un `instructions.json` existant ou en génère un avec les valeurs par défaut
-- Chaque changement de sélection dans un dropdown met à jour immédiatement le fichier
-- Les actions en masse (bulk action) mettent également à jour le fichier immédiatement
-- Un indicateur visuel (toast) confirme chaque sauvegarde
+**Comportement automatique (v2.0.0-alpha.8+) :**
+- Au chargement d'une catégorie, le dashboard lit un `instructions.json` existant si présent (aucune auto-écriture de valeurs par défaut — changement alpha.8 par rapport aux versions antérieures).
+- La première action utilisateur (changement de dropdown ou bulk action) déclenche la première écriture avec toutes les décisions en cours.
+- Chaque changement ultérieur met à jour immédiatement le fichier.
+- Un indicateur visuel (toast) confirme chaque sauvegarde.
 
 **Valeurs par défaut :**
 - Catégorie `trash` : `delete` (SUPPRIMER)
@@ -194,7 +214,7 @@ Valeurs possibles pour la balise `action` :
 
 Le dashboard dispose d'un menu de navigation dans l'en-tête avec des onglets pour les différentes fonctionnalités :
 * **Catégorisation** : gestion des mails triés (vue par défaut)
-* **Mémoire** : placeholder pour la future visualisation/édition de la mémoire
+* **Mémoire** : visualisation et édition des fichiers de mémoire à long terme (activé en alpha.8)
 * **Tâches** : gestionnaire de tâches en 3 sections (consultations, mails à envoyer, travail à faire)
 
 ### Navigation multi-catégories
@@ -301,7 +321,66 @@ Liste les sous-répertoires de `to-work/`. Chaque répertoire représente une t�
 * **Modale d'édition** : backdrop-blur, textarea monospace, boutons Annuler/Sauvegarder
 * **Design** : même design system que la vue Catégorisation (Tailwind, dark mode, glassmorphism, animations slide-up, toasts)
 
-## **7\. Principes de Sécurité**
+## **7\. Vue Mémoire** *(alpha.8+)*
+
+La vue Mémoire permet de consulter et d'éditer les fichiers de mémoire à long terme du projet depuis le dashboard, sans passer par un éditeur texte externe.
+
+### Sidebar Mémoire
+
+| Section | Source | Description |
+|---------|--------|-------------|
+| CLAUDE.md | `CLAUDE.md` (racine) | Mémoire de travail principale du projet |
+| Personnes | `memory/people/*.md` | Fiches individuelles des interlocuteurs |
+| Sujets | `memory/projects/*.md` | Dossiers thématiques et projets en cours |
+| Contexte | `memory/context/*.md` | Référentiel partagé (lieux, réunions récurrentes, etc.) |
+
+Chaque section affiche un compteur dans la sidebar.
+
+### Patterns UX
+
+* **Carte par fichier** : nom du fichier en monospace, aperçu de 240 caractères.
+* **Carte dépliable** : affiche le contenu complet en monospace (whitespace préservé).
+* **Édition** : modale textarea identique à la vue Tâches, sauvegarde directement dans le fichier.
+* **Suppression** : confirmation inline check/x (désactivée pour CLAUDE.md).
+* **Filtre texte** : recherche sur le nom et le contenu de tous les fichiers de la section active.
+
+## **8\. Watch & versioning** *(alpha.8+)*
+
+Le dashboard détecte automatiquement les modifications produites par Claude (via les commandes `/todomail:check-inbox`, `/todomail:process-todo`, etc.) grâce à un mécanisme de polling local, sans WebSocket ni modification du serveur MCP.
+
+### Fichiers de surveillance (`$CLAUDE_PROJECT_DIR/.todomail/`)
+
+Depuis alpha.8, tout le runtime du plugin pour ce workspace vit dans le dossier `.todomail/` à la racine du workspace.
+
+| Fichier | Écrit par | Rôle |
+|---------|-----------|------|
+| `.todomail/invalidate.txt` | `lib/state.py.save_state()` à chaque écriture d'état + hook `PostToolUse` (`hooks/invalidate_dashboard_cache.py`) après `mv`/`rm` Bash sur `todo/`, `inbox/` ou `mails/` | Signal d'invalidation — son `lastModified` change à chaque modif. |
+| `.todomail/state.json` | `lib/state.py.save_state()` (source de vérité unique, plus de mirror) | Expose au dashboard le `session_id`, `active_lock`, `errors[]` et les checkpoints. |
+
+Le dashboard lit ces deux fichiers toutes les 3 secondes et déclenche un rafraîchissement si :
+- `.todomail/invalidate.txt` a changé (Claude a bougé des fichiers ou écrit dans `state.json`),
+- Le `session_id` du workspace a changé (nouveau cycle),
+- Le verrou vient d'être libéré (fin de cycle),
+- La liste des erreurs a changé.
+
+### Banner de fraîcheur
+
+Si le `_meta.session_id` du `pending_emails.json` courant ne correspond plus à la session active du workspace, un banner ambre apparaît en haut de la vue Catégorisation avec un bouton « Recharger ».
+
+### Verrou pendant écriture Claude
+
+Si `.todomail/state.json.active_lock` n'est pas `null` (un `sort-mails` ou `process-todo` est en cours), un banner bleu « Claude travaille… » s'affiche, les dropdowns de décision et les boutons bulk sont grisés. La libération du verrou au tick suivant déclenche un rafraîchissement automatique.
+
+### Panneau d'erreurs et reprise
+
+Si `state.errors[]` contient des entrées, un panneau rouge déployable liste les mails en échec avec leur phase, type d'erreur, compteur de tentatives et message. Deux actions :
+
+* **Retry tous** : écrit `.todomail/retry_request.txt` (liste des `mail_id` à relancer). Consommé par `hooks/session_start.py` au prochain démarrage de commande (marque `retry_requested: true` sur les entrées correspondantes pour que `/process-todo --retry` les traite en priorité).
+* **Ignorer** (par erreur) : écrit `.todomail/errors_dismiss.txt` (un `mail_id` par ligne). Consommé par `hooks/session_start.py` qui retire les entrées correspondantes de `state.errors[]`.
+
+Ces fichiers-marqueurs sont supprimés après consommation. L'architecture évite toute écriture concurrente du `state.json` entre le navigateur et les processus Python.
+
+## **9\. Principes de Sécurité**
 
 * **Sandboxing :** L'application n'accède qu'au dossier explicitement sélectionné par l'utilisateur.
 * **Zéro Cloud :** Aucune donnée ne quitte la machine de l'utilisateur. Les fichiers sont lus et écrits localement par le navigateur.

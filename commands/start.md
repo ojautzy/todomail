@@ -66,6 +66,7 @@ Vérifie que le répertoire de travail contient les répertoires suivants :
 - `to-work/`
 - `to-brief/`
 - `docs/`
+- `.todomail/` (depuis alpha.8 — runtime du plugin pour ce workspace : state.json, memory_cache.json, invalidate.txt, hooks.log)
 
 **Si un ou plusieurs répertoires n'existent pas:** Crée tous les répertoires manquants.
 

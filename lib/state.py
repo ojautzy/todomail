@@ -1,8 +1,12 @@
 """Gestion du state.json persistant pour le plugin TodoMail.
 
-state.json vit dans ${CLAUDE_PLUGIN_DATA}/state.json avec fallback
-vers {plugin_root}/.plugin-data/state.json si la variable
-d'environnement n'est pas definie.
+A partir de la v2.0.0-alpha.8 : tout l'etat runtime du plugin vit dans
+`$CLAUDE_PROJECT_DIR/.todomail/` (workspace utilisateur), pas dans
+`$CLAUDE_PLUGIN_DATA`. Decision motivee par le fait que toutes les donnees
+runtime du plugin sont specifiques au workspace (pas globales au plugin).
+Avantages : isolation naturelle entre workspaces, plus de mirror a
+synchroniser, plus de probleme de propagation des variables d'env aux
+sous-processus Python lances par les skills, debug facilite.
 """
 
 import json
@@ -30,16 +34,63 @@ _DEFAULT_STATE = {
 }
 
 
-def _state_dir() -> Path:
-    """Resolve the directory for state.json."""
-    env = os.environ.get("CLAUDE_PLUGIN_DATA")
+def workspace_dir() -> Path:
+    """Resolve la racine du workspace utilisateur.
+
+    Ordre :
+    1. `$CLAUDE_PROJECT_DIR` (defini par Claude Code dans les hooks ;
+       passe via le payload aux scripts ; les sous-processus Python
+       lances par un skill peuvent ne pas l'avoir, d'ou le fallback).
+    2. `os.getcwd()` si le repertoire contient un marqueur workspace
+       (`.todomail-config.json`). Sinon erreur explicite.
+
+    Lever une exception est volontairement strict : sans workspace
+    valide, aucune ecriture d'etat n'a de sens.
+    """
+    env = os.environ.get("CLAUDE_PROJECT_DIR")
     if env:
-        return Path(env)
-    return Path(__file__).resolve().parent.parent / ".plugin-data"
+        project = Path(env)
+        if project.is_dir():
+            return project
+    cwd = Path.cwd()
+    if (cwd / ".todomail-config.json").is_file():
+        return cwd
+    raise RuntimeError(
+        "Workspace todomail introuvable : ni $CLAUDE_PROJECT_DIR ni un "
+        "cwd contenant .todomail-config.json. Lance /todomail:start "
+        "depuis le repertoire de travail pour initialiser."
+    )
+
+
+def runtime_dir() -> Path:
+    """Repertoire `.todomail/` a la racine du workspace, tout l'etat runtime.
+
+    Cree le dossier a la volee s'il n'existe pas (idempotent).
+    """
+    rt = workspace_dir() / ".todomail"
+    rt.mkdir(parents=True, exist_ok=True)
+    return rt
 
 
 def _state_path() -> Path:
-    return _state_dir() / "state.json"
+    return runtime_dir() / "state.json"
+
+
+def _touch_dashboard_invalidate() -> None:
+    """Touche `.todomail/invalidate.txt` — signal pour le polling dashboard.
+
+    Tout `save_state()` publie ce top externe detectable via File System
+    Access, sans dependre du hook `PostToolUse Bash(mv|rm)` qui ne fire pas
+    quand les skills bougent les fichiers via Python (`lib.fs_utils.safe_mv`).
+    Best-effort, silencieux en cas d'erreur.
+    """
+    try:
+        path = runtime_dir() / "invalidate.txt"
+        path.touch(exist_ok=True)
+        now = datetime.now(timezone.utc).timestamp()
+        os.utime(path, (now, now))
+    except (OSError, RuntimeError):
+        pass
 
 
 def _generate_session_id() -> str:
@@ -70,14 +121,19 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
-    """Atomic write of state dict to state.json."""
+    """Atomic write of state dict to `.todomail/state.json`.
+
+    Touche aussi `.todomail/invalidate.txt` pour notifier le polling
+    dashboard. Plus de mirror a synchroniser depuis alpha.8 — le state
+    canonique vit directement a un endroit accessible au dashboard.
+    """
     path = _state_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     state["last_update_at"] = _now_iso()
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
     os.replace(str(tmp), str(path))
+    _touch_dashboard_invalidate()
 
 
 def update_checkpoint(phase: str, status: str, payload: dict[str, Any] | None = None) -> None:

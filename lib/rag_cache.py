@@ -55,14 +55,18 @@ class RagCache:
     def dump_for_observability(self, path: Path | None = None) -> None:
         """Serialize cache to JSON for debugging (read-only observability).
 
-        Writes to ${CLAUDE_PLUGIN_DATA}/rag_cache.json if path is None.
+        Writes to `$CLAUDE_PROJECT_DIR/.todomail/rag_cache.json` if path is None.
         This snapshot is never read back; the cache lives only in memory.
+        Aligne avec le refactor alpha.8 (tout le runtime dans .todomail/).
         """
         if path is None:
-            env = os.environ.get("CLAUDE_PLUGIN_DATA")
+            env = os.environ.get("CLAUDE_PROJECT_DIR")
             if not env:
                 return
-            path = Path(env) / "rag_cache.json"
+            project = Path(env)
+            if not project.is_dir():
+                return
+            path = project / ".todomail" / "rag_cache.json"
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         snapshot = {

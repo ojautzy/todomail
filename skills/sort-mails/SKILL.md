@@ -14,6 +14,28 @@ Trie `inbox/` dans les 7 catégories de `todo/`. Exploite le contexte 1M d'Opus
 pour analyser les mails en flux (pas d'agent par mail), avec pré-filtrage Haiku
 sur les évidences et cache RAG pour éviter les appels MCP redondants.
 
+## Accès aux helpers Python du plugin (à lire en premier)
+
+Les modules `lib.state`, `lib.fs_utils`, `lib.rag_cache`, `lib.error_modes`, `lib.config` mentionnés dans ce SKILL vivent à la racine du plugin, pas dans le répertoire du skill ni dans le workspace utilisateur. Ne pas chercher `skills/sort-mails/lib/` — ce chemin n'existe pas.
+
+**Pattern canonique** pour tout bloc Bash qui importe `lib.*` — la variable est résolue **dans le Python** (la substitution `${CLAUDE_PLUGIN_ROOT}` par le shell n'est pas fiable dans tous les contextes d'exécution des skills/commandes) :
+
+```bash
+python3 - <<'PY'
+import sys, os
+plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not plugin_root:
+    raise RuntimeError("CLAUDE_PLUGIN_ROOT non defini — impossible de localiser les helpers lib/")
+sys.path.insert(0, plugin_root)
+from lib.state import load_state, save_state, acquire_lock, release_lock, update_checkpoint, record_error, get_pending_errors
+from lib.fs_utils import safe_mv, atomic_write_json, read_v2_json, write_v2_json, read_pending_emails, write_pending_emails
+from lib.rag_cache import RagCache
+# ... suite du traitement ...
+PY
+```
+
+Si un `import lib.X` renvoie `ModuleNotFoundError`, ne **JAMAIS** conclure « pas de lib externe, analyse directe en flux » — c'est un bug d'import, pas une caractéristique du skill. Vérifier que `CLAUDE_PLUGIN_ROOT` est bien exporté dans l'environnement (en dernier recours, inspecter via `Bash` un `env | grep CLAUDE` pour diagnostiquer). Les helpers sont indispensables : sans `acquire_lock`/`save_state`, le dashboard n'est pas notifié du cycle et `state.json` reste incohérent.
+
 ## Vérification préalable des répertoires
 
 Vérifier la présence de `inbox/`, `todo/`, `to-clean-by-user/` et des 7 sous-dossiers

@@ -3,8 +3,10 @@
 
 Déclenché après une commande `mv` ou `rm` lancée par Claude. Filtre sur
 les chemins touchés : on ne signale que si l'opération concerne `todo/`,
-`inbox/` ou `mails/`. Touche `dashboard_invalidate.txt` à la racine du
-projet et incrémente le compteur de modifications dans state.json.
+`inbox/` ou `mails/`. Touche `.todomail/invalidate.txt` dans le workspace
+et incrémente le compteur de modifications dans state.json (ce qui touche
+aussi `.todomail/invalidate.txt` au passage — redondance assumee, c'est le
+fichier de signal, peu importe d'ou vient le top).
 
 Toujours exit 0 (non bloquant). Lit le payload JSON sur stdin.
 """
@@ -69,7 +71,7 @@ def main() -> None:
         return
 
     project = _project_dir(payload)
-    _touch(project / "dashboard_invalidate.txt")
+    _touch(project / ".todomail" / "invalidate.txt")
     _bump_counter()
 
 

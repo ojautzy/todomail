@@ -14,6 +14,25 @@ strictement opt-in.
 > **RÈGLE D'EXÉCUTION :** à chaque ARRÊT OBLIGATOIRE, afficher la proposition,
 > cesser toute exécution et attendre une réponse explicite.
 
+## Accès aux helpers Python du plugin (à lire en premier)
+
+Les modules `lib.state`, `lib.fs_utils`, `lib.rag_cache` référencés ci-dessous vivent à la racine du plugin, résolue via la variable d'environnement `CLAUDE_PLUGIN_ROOT`. La variable est récupérée **côté Python** (la substitution shell `${CLAUDE_PLUGIN_ROOT}` n'est pas fiable dans tous les contextes d'exécution) :
+
+```bash
+python3 - <<'PY'
+import sys, os
+plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not plugin_root:
+    raise RuntimeError("CLAUDE_PLUGIN_ROOT non defini")
+sys.path.insert(0, plugin_root)
+from lib.state import load_state, save_state, acquire_lock, release_lock, update_checkpoint, get_pending_errors, clear_error
+from lib.fs_utils import safe_mv, safe_rm, atomic_write_json, read_v2_json, write_v2_json
+# ...
+PY
+```
+
+Si `ModuleNotFoundError: lib`, ne **jamais** conclure « pas de lib externe » — vérifier que `CLAUDE_PLUGIN_ROOT` est bien défini et retenter. Les helpers sont indispensables : sans `acquire_lock`/`save_state`, le dashboard ne voit pas le cycle et `state.json` reste incohérent.
+
 ## Parsing des arguments
 
 Arguments dans `$ARGUMENTS`, parsing sémantique (pas de script externe).
@@ -55,12 +74,41 @@ tool MCP `status`, comparer `status.rag_name` avec `expected_rag_name`.
 
 ## Étape 0 — Warm-up
 
+> **OBLIGATOIRE — aucun shortcut possible, meme pour 1 seul mail a traiter.**
+> Sans `acquire_lock`, le dashboard n'affiche pas le verrou visuel et les
+> checkpoints ne sont pas traces dans `state.json`. L'utilisateur doit voir
+> le cycle en temps reel dans son dashboard.
+
 1. `Read` de `CLAUDE.md` et `memory/*`.
-2. Instancier `RagCache` (`lib.rag_cache`).
-3. `load_state()` ; si `errors[]` non vide, signaler `--retry` possible.
-4. `acquire_lock("process-todo")`. Verrouillé → **ARRÊT OBLIGATOIRE — Verrou actif**.
-5. `ErrorHandler(mode="lenient"|"strict")` selon flag.
-6. Si `--retry` : sauter Étapes 1-2 ; pour chaque `mail_id` dans
+2. Bloc d'initialisation Python obligatoire a executer AVANT toute autre action :
+
+```bash
+python3 - <<'PY'
+import sys, os
+plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not plugin_root:
+    raise RuntimeError("CLAUDE_PLUGIN_ROOT non defini")
+sys.path.insert(0, plugin_root)
+from lib.state import load_state, acquire_lock, update_checkpoint, get_pending_errors
+from lib.rag_cache import RagCache
+
+state = load_state()
+pending = get_pending_errors()
+if pending:
+    print(f"ATTENTION : {len(pending)} erreur(s) en attente — relancer avec --retry")
+
+if not acquire_lock("process-todo"):
+    print(f"VERROU ACTIF : {state.get('active_lock')} — ARRET OBLIGATOIRE")
+    sys.exit(2)
+
+update_checkpoint("process-todo:start", "ok")
+print("LOCK ACQUIRED — cycle process-todo demarre")
+PY
+```
+
+3. Si sortie `VERROU ACTIF` → **ARRÊT OBLIGATOIRE**. Demander a l'utilisateur.
+4. `ErrorHandler(mode="lenient"|"strict")` selon flag.
+5. Si `--retry` : sauter Étapes 1-2 ; pour chaque `mail_id` dans
    `get_pending_errors()`, rejouer la phase échouée (cf. 3a/3b) puis Étape 6.
 
 ## Étape 1 — Collecte des instructions
@@ -296,14 +344,33 @@ les conventions de `@${CLAUDE_PLUGIN_ROOT}/skills/memory-management/SKILL.md` :
 
 ## Étape 6 — Finalisation + compte-rendu
 
+> **OBLIGATOIRE — `release_lock()` doit etre appele meme en cas d'erreur**
+> (utiliser un `try/finally` Python). Sans release, le prochain cycle est
+> bloque par le verrou orphelin et l'utilisateur voit une banniere bleue
+> permanente dans son dashboard.
+
+Bloc de finalisation Python obligatoire :
+
+```bash
+python3 - <<'PY'
+import sys, os
+plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+sys.path.insert(0, plugin_root)
+from lib.state import update_checkpoint, release_lock
+
+update_checkpoint("process-todo:done", "ok", {"stats": {...}})  # remplacer stats
+release_lock()
+print("LOCK RELEASED — cycle process-todo termine")
+PY
+```
+
 1. Écraser chaque `instructions.json` traité avec `write_instructions(..., [])`
    (format v2, `instructions` vide).
 2. Écraser `todo/_deferred.json` avec `[]` si existant.
-3. `update_checkpoint("process-todo:done", "ok", {"stats": ...})`.
-4. `release_lock()`.
-5. `rag_cache.clear()` + afficher `rag_cache.stats()` (hits/miss).
-6. `touch` (`atomic_write_json`) `dashboard_invalidate.txt` à la racine (signal
-   dashboard — sans effet avant Phase 5).
+3. Executer le bloc de finalisation Python ci-dessus.
+4. `rag_cache.clear()` + afficher `rag_cache.stats()` (hits/miss).
+5. `.todomail/invalidate.txt` est touche automatiquement par `save_state()`
+   (alpha.8) — pas de touch manuel necessaire.
 
 ### Compte-rendu
 
@@ -376,5 +443,5 @@ Contrat produit pour chaque mail (artefact de reprise, réécrit à chaque phase
   parallélisme).
 - **`_deferred.json`** : file d'attente entre Étape 2 et Étape 3 pour les
   reclassés, évite un aller-retour dashboard. Écrasé `[]` en Étape 6.
-- **Dashboard non modifié** : `dashboard_invalidate.txt` touché en fin (refonte
-  = Phase 5).
+- **Dashboard notifié automatiquement** : chaque `save_state()` touche
+  `.todomail/invalidate.txt`, déclenchant le refresh du polling 3s.

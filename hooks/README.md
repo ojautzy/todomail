@@ -1,6 +1,6 @@
 # Hooks TodoMail
 
-Hooks Claude Code livrés avec le plugin TodoMail (Phase 4, alpha.5).
+Hooks Claude Code livrés avec le plugin TodoMail (Phase 4, alpha.5+).
 Leur rôle est d'automatiser ce qui était auparavant déclaratif (à la
 charge du LLM) : warm-up mémoire, garde-fou filesystem, invalidation
 du dashboard, injection contextuelle, anti-compaction.
@@ -16,10 +16,17 @@ du dashboard, injection contextuelle, anti-compaction.
   décision de refus.
 - **Entrée** : chaque hook lit son payload JSON sur **stdin** (format
   officiel Claude Code). Les variables d'environnement utilisées sont
-  `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}` et
-  `$CLAUDE_PROJECT_DIR` (la `cwd` du payload sert de repli).
+  `${CLAUDE_PLUGIN_ROOT}` (code du plugin) et `$CLAUDE_PROJECT_DIR`
+  (workspace utilisateur ; la `cwd` du payload sert de repli).
 - **Sortie** : JSON structuré sur stdout (`hookSpecificOutput` avec
   `additionalContext` ou `permissionDecision`). Silence par défaut.
+- **Stockage** : depuis alpha.8, tout l'état runtime du plugin pour
+  un workspace vit dans **`$CLAUDE_PROJECT_DIR/.todomail/`** (state.json,
+  memory_cache.json, invalidate.txt, hooks.log, retry_request.txt,
+  errors_dismiss.txt, precompact_snapshot_*.json). Plus d'écritures
+  dans `$CLAUDE_PLUGIN_DATA` — l'usage de cette variable était
+  inadapté pour des données spécifiques au workspace (cf. CHANGELOG
+  alpha.8).
 
 ## Hooks livrés
 
@@ -31,7 +38,10 @@ du dashboard, injection contextuelle, anti-compaction.
   `to-send/`, `to-work/`, `docs/`) dans `$CLAUDE_PROJECT_DIR` ;
 - compile un index léger de la mémoire (`memory/people/`,
   `memory/projects/`, `memory/context/`) dans
-  `${CLAUDE_PLUGIN_DATA}/memory_cache.json` ;
+  `$CLAUDE_PROJECT_DIR/.todomail/memory_cache.json` ;
+- consomme les fichiers-marqueurs écrits par le dashboard
+  (`.todomail/retry_request.txt`, `.todomail/errors_dismiss.txt`)
+  pour annoter `state.errors[]` ou retirer des entrées ;
 - lit `state.json` via `lib.state.load_state()` ; si `active_lock`,
   erreurs en attente ou répertoires manquants, injecte un message
   sous forme `hookSpecificOutput.additionalContext` pour signaler à
@@ -61,9 +71,15 @@ Filtré par `if: "Bash(mv *)"` et `if: "Bash(rm *)"` dans
 `hooks.json`. Si la commande Bash exécutée contient un `mv` ou un `rm`
 touchant `todo/`, `inbox/` ou `mails/` :
 
-- `touch` de `$CLAUDE_PROJECT_DIR/dashboard_invalidate.txt` (signal pour
+- `touch` de `$CLAUDE_PROJECT_DIR/.todomail/invalidate.txt` (signal pour
   le dashboard v3 qui polle ce fichier toutes les 3 s — Phase 5) ;
-- incrémente `state.counters.modifications`.
+- incrémente `state.counters.modifications` (l'écriture du state via
+  `lib.state.save_state()` re-touche le fichier au passage).
+
+**Note alpha.8** : le signal d'invalidation est aussi émis automatiquement
+par `lib.state.save_state()` à chaque écriture d'état (acquire_lock,
+release_lock, update_checkpoint). Ce hook reste utile comme ceinture
+quand un skill bouge des fichiers via `Bash mv` plutôt que `lib.fs_utils`.
 
 Timeout : 5 s. Non bloquant.
 
@@ -80,8 +96,8 @@ Timeout : 5 s. Non bloquant.
 
 Avant la compaction du contexte, sauvegarde un snapshot du `state.json`
 et des derniers checkpoints dans
-`${CLAUDE_PLUGIN_DATA}/precompact_snapshot_<timestamp>.json`. Conserve
-les 10 snapshots les plus récents.
+`$CLAUDE_PROJECT_DIR/.todomail/precompact_snapshot_<timestamp>.json`.
+Conserve les 10 snapshots les plus récents.
 
 Timeout : 10 s. Ne bloque jamais la compaction.
 
@@ -154,10 +170,9 @@ Pour vérifier que les hooks se déclenchent bien via le chemin
 *Customize → Plugins* de Claude Desktop, créer un fichier vide
 `.hooks_debug` à la racine du projet (`$CLAUDE_PROJECT_DIR`) avant
 d'ouvrir une session. `session_start.py` écrira alors une ligne
-dans `${CLAUDE_PLUGIN_DATA}/.hooks_fired.log` à chaque déclenchement.
-
-Chemin typique :
-`~/.claude/plugins/data/todomail-<marketplace>/.hooks_fired.log`.
+dans `$CLAUDE_PROJECT_DIR/.todomail/hooks.log` à chaque déclenchement,
+avec source, session_id, cwd, sys.executable et résolution des
+variables `CLAUDE_PROJECT_DIR` et `CLAUDE_PLUGIN_ROOT`.
 
 Supprimer `.hooks_debug` désactive le log (silencieux par défaut).
 
@@ -181,9 +196,10 @@ session.
 ## Limitations connues
 
 - **Plugin cache en lecture seule** (`${CLAUDE_PLUGIN_ROOT}` =
-  `~/.claude/plugins/cache/<id>/`) : aucun hook n'écrit dans le
-  répertoire plugin. Toute persistance va dans `${CLAUDE_PLUGIN_DATA}`
-  (survit aux updates) ou dans `$CLAUDE_PROJECT_DIR` (signal dashboard).
+  `~/.claude/plugins/cache/<id>/` ou marketplace) : aucun hook n'écrit
+  dans le répertoire plugin. Toute persistance va dans
+  `$CLAUDE_PROJECT_DIR/.todomail/` (depuis alpha.8 ; auparavant éclaté
+  entre `$CLAUDE_PLUGIN_DATA` et la racine du workspace).
 - **Claude Desktop ne rafraîchit le cache plugin qu'à l'update** : un
   changement de script côté dépôt nécessite un bump de version dans
   `.claude-plugin/plugin.json` et une mise à jour via

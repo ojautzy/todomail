@@ -7,6 +7,93 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.0.0-alpha.8] - 2026-04-18
+
+### Ajouté
+
+- **Dashboard v3** — Polling 3s sur `dashboard_invalidate.txt` et `.todomail-state.json` pour détecter les modifications de Claude. Le dashboard rafraîchit automatiquement les compteurs et la catégorie active sans action utilisateur.
+- Helper `extractEmailsAndMeta(data)` dans `skills/dashboard.html` : extension du hotfix alpha.3 (`extractEmails` conservé en lecture v1/v2) qui retourne aussi le bloc `_meta`. Idem `extractInstructionsAndMeta(data)` pour les `instructions.json`.
+- **Banner de fraîcheur** affiché en vue Catégorisation si le `_meta.session_id` du `pending_emails.json` ne correspond plus à la session courante du workspace (lue depuis `.todomail-state.json`).
+- **Verrou visuel** pendant qu'un cycle Claude tourne : bannière bleue « Claude travaille… (lock: X) », dropdowns de décision et boutons bulk grisés.
+- **Panneau d'erreurs** déployable depuis la zone principale : liste des entrées de `state.errors[]` avec phase, type, compteur de tentatives et message. Bouton « Retry tous » et « Ignorer » par erreur.
+- **Fichiers-marqueurs `retry_request.txt` et `errors_dismiss.txt`** à la racine du workspace : le dashboard exprime une intention utilisateur, `hooks/session_start.py` les consomme au démarrage de la prochaine commande du plugin (marque `retry_requested: true` ou retire l'erreur). Pattern symétrique à `dashboard_invalidate.txt`.
+- **Reconnexion automatique** du `DirectoryHandle` via IndexedDB : après la première autorisation, le dashboard rebranche silencieusement le workspace au rechargement (si la permission Chromium a survécu). Si la permission a expiré, un bouton « Reprendre la connexion » permet de ré-autoriser sans rouvrir le picker. Nouveau bouton « Oublier ce projet » pour invalider le handle persisté.
+- **Écran d'avertissement plein page** si le navigateur ne supporte pas l'API File System Access (Safari, Orion, Firefox) avec la liste explicite des moteurs compatibles.
+- **Vue Mémoire activée** (`memory` passe de `enabled: false` à `enabled: true`) : sidebar avec 4 sections — CLAUDE.md (racine), Personnes (`memory/people/`), Sujets (`memory/projects/`), Contexte (`memory/context/`). Chaque fichier est éditable via une modale textarea et supprimable (sauf CLAUDE.md) avec confirmation inline.
+- **Mirror `.todomail-state.json`** : `lib/state.py.save_state()` écrit désormais une copie du state canonique à la racine du workspace (`$CLAUDE_PROJECT_DIR`) pour que le dashboard HTML y accède via File System Access. No-op silencieux si la variable d'environnement n'est pas définie.
+- `.gitignore` : ajout de `.todomail-state.json`, `dashboard_invalidate.txt`, `retry_request.txt`, `errors_dismiss.txt` (artefacts runtime du workspace).
+
+### Modifié
+
+- **Suppression de l'auto-écriture systématique de `instructions.json`** au chargement d'une catégorie (ligne 239 alpha.7). Les fichiers d'instructions ne sont plus réécrits que sur action utilisateur réelle (`updateDecision` ou `bulkAction`), ce qui évite l'écrasement d'instructions fraîches en cours de `process-todo`.
+- `<title>` de `skills/dashboard.html` : retrait de la mention résiduelle « Cowork » (coquille héritée de la v1.x).
+- `README.dashboard.md` : nouvelle section consacrée au mécanisme de polling, au banner de fraîcheur, au verrou, au panneau d'erreurs et à la vue Mémoire.
+
+### Corrigé
+
+- Plus de désynchronisation silencieuse entre le dashboard et Claude : un cycle `/todomail:check-inbox` ou `/todomail:process-todo` est détecté dans les 3s côté dashboard.
+- Plus d'écrasement d'`instructions.json` valides lors d'un simple changement d'onglet côté utilisateur.
+
+### Correctifs post-test (bugfix avant merge)
+
+- `lib/state.py.save_state()` touche désormais `dashboard_invalidate.txt` à chaque écriture d'état — `sort-mails` et `process-todo` déplaçant les fichiers via Python (`lib.fs_utils.safe_mv`), le hook `PostToolUse Bash(mv|rm)` ne peut pas être le signal exclusif. Chaque `acquire_lock`/`release_lock`/`update_checkpoint` publie maintenant un top externe visible par le polling 3s. Signal fiable indépendant du canal Bash.
+- **Retrait complet du banner « Données obsolètes »** : la comparaison `pending_emails.json._meta.session_id` vs `state.json.session_id` générait des faux positifs permanents parce que `sort-mails` écrit un UUID custom tandis que `lib/state.py` utilise un format timestamp — divergence structurelle jamais réconciliée. La condition durcie (`generated_at < started_at`) restait techniquement correcte mais n'apportait aucune information actionnable : tous les fichiers existants ont par construction un `generated_at` antérieur à un `started_at` rafraîchi en session courante. Le polling 3s + le rechargement systématique à chaque `switchSubdir` + le verrou visuel pendant un cycle suffisent à garantir la cohérence visible. La normalisation des `session_id` entre `sort-mails` et `lib/state.py` est reportée en Phase 6.
+- **Documentation explicite du `PYTHONPATH` pour accéder aux helpers `lib/`** dans `skills/sort-mails/SKILL.md`, `commands/check-inbox.md`, `commands/process-todo.md` et `CLAUDE.md`. Sans ce préambule, le LLM cherchait `skills/sort-mails/lib/` au lieu de `${CLAUDE_PLUGIN_ROOT}/lib/`, concluait « pas de lib externe » et faisait une analyse directe sans `acquire_lock` ni `save_state` — donc sans touch de `dashboard_invalidate.txt`, donc sans notification du dashboard. Symptôme observé en test alpha.8 : `/check-inbox` se terminait sans aucun signal visible par le polling. Le pattern canonique (`PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -c 'sys.path.insert(...)'`) est désormais en préambule de chaque SKILL.md et command.md qui importe `lib/`.
+- **Auto-écriture conditionnelle d'`instructions.json` restaurée** : la suppression pure en alpha.8 initial créait une régression fonctionnelle — si l'utilisateur ne touchait à rien sur le dashboard, aucun fichier n'était écrit et `/process-todo` n'avait rien à traiter. Correctif : le dashboard écrit les décisions par défaut **uniquement si `instructions.json` est absent** (pas d'`_meta`, pas de décisions chargées). Si un fichier existe déjà (écrit par Claude ou par un cycle précédent), il n'est jamais écrasé. Concilie l'absence de régression et la protection contre l'écrasement qui motivait la suppression initiale.
+- **Renforcement de l'étape 0 et de l'étape 6 dans `commands/process-todo.md`** avec blocs Python concrets à exécuter (`acquire_lock`/`update_checkpoint` en début, `release_lock` en fin), mention explicite « OBLIGATOIRE — aucun shortcut possible, même pour 1 seul mail ». Symptôme précédent : process-todo zappait l'étape 0 sur de petits volumes → pas de lock, pas de bannière bleue dans le dashboard, pas de trace dans `state.json.checkpoints`.
+- **`ensureAllInstructions(handle)` dans le dashboard** — fix critique pour `/process-todo`. Symptôme précédent : process-todo ne traitait que les mails dont la catégorie avait été visitée par l'utilisateur dans le dashboard ; les autres restaient en place sans `instructions.json`. Cause : `loadSubdirEmails` (qui contenait l'auto-écriture conditionnelle) ne tourne que pour la catégorie active. Les 6 autres catégories n'étaient jamais initialisées tant que l'utilisateur ne cliquait pas dessus. Correctif : nouvelle fonction `ensureAllInstructions(handle)` qui parcourt les 7 catégories et écrit un `instructions.json` par défaut pour chaque catégorie non vide qui n'en a pas (`delete` pour `trash`, `other` pour les autres). Idempotente — n'écrase jamais un fichier existant. Invoquée au `bootstrapHandle` (connexion initiale, reconnexion auto) et à chaque `refreshAll` du polling 3s (après chaque cycle Claude).
+- **Découverte automatique de `CLAUDE_PLUGIN_DATA` et `CLAUDE_PROJECT_DIR` dans `lib/state.py`** — fix critique du polling. Diagnostic : un sous-processus Python lancé depuis le `Bash` tool d'un skill **n'hérite pas** des variables `CLAUDE_PLUGIN_DATA` ni `CLAUDE_PROJECT_DIR` (seul `CLAUDE_PLUGIN_ROOT` est manuellement exporté par le préambule). Conséquence en chaîne : `_state_dir()` fall-backait sur `${plugin_root}/.plugin-data/` (état orphelin jamais lu par les hooks), `_workspace_mirror_path()` retournait `None` (mirror jamais écrit), `_touch_dashboard_invalidate()` early-returnait (polling jamais notifié). Le dashboard ne voyait donc rien malgré des `acquire_lock`/`release_lock` correctement appelés. Correctifs :
+  - `_discover_plugin_data()` cherche `~/.claude/plugins/data/todomail*` et choisit le répertoire le plus récemment modifié — utilisé en fallback de `$CLAUDE_PLUGIN_DATA`.
+  - `_discover_workspace()` utilise `$CLAUDE_PROJECT_DIR` puis `os.getcwd()` si le cwd contient un marqueur `.todomail-config.json`.
+  - `_workspace_mirror_path()` et `_touch_dashboard_invalidate()` exploitent ce fallback. Désormais, même si le sous-process Python d'un skill n'a aucune variable d'env Claude Code, le state canonique et le mirror dashboard sont écrits au bon endroit.
+- `hooks/session_start.py` : `.hooks_fired.log` capture désormais `CLAUDE_PROJECT_DIR`, `CLAUDE_PLUGIN_DATA` et `CLAUDE_PLUGIN_ROOT` pour faciliter le diagnostic des prochaines anomalies d'environnement.
+
+### Refactor architectural — runtime du plugin dans le workspace
+
+Tout l'état runtime du plugin pour ce workspace vit désormais dans un dossier dédié **`$CLAUDE_PROJECT_DIR/.todomail/`** au lieu d'être éclaté entre `$CLAUDE_PLUGIN_DATA` et la racine du workspace.
+
+**Motivation** : toutes les données runtime du plugin (state, memory_cache, hooks log, signal d'invalidation, marqueurs retry/dismiss) sont **spécifiques au workspace**, jamais globales au plugin. Utiliser `CLAUDE_PLUGIN_DATA` (conçu pour des données globales survivant aux updates) était un mauvais fit qui causait :
+- Un mirror `.todomail-state.json` à entretenir (double écriture, risque désynchronisation)
+- Une découverte automatique fragile en cas d'absence de variable d'env (cf. correctif précédent)
+- Des installations fantômes (`todomail-inline`, `todomail-local-desktop-app-uploads`) qui coexistent
+- Une difficulté de debug (chercher dans `~/.claude/plugins/data/todomail-*` au lieu du workspace)
+
+**Nouveau schéma** :
+
+```
+$CLAUDE_PROJECT_DIR/
+├── .todomail/                      ← TOUT le runtime
+│   ├── state.json                  ← (anciennement $PLUGIN_DATA/state.json)
+│   ├── memory_cache.json           ← (anciennement $PLUGIN_DATA/memory_cache.json)
+│   ├── hooks.log                   ← (anciennement $PLUGIN_DATA/.hooks_fired.log)
+│   ├── invalidate.txt              ← (anciennement dashboard_invalidate.txt à la racine)
+│   ├── retry_request.txt           ← (anciennement à la racine)
+│   ├── errors_dismiss.txt          ← (anciennement à la racine)
+│   └── precompact_snapshot_*.json  ← (anciennement $PLUGIN_DATA/)
+├── .todomail-config.json           ← inchangé
+├── inbox/, todo/, mails/, ...      ← inchangé
+└── dashboard.html                  ← lit directement .todomail/state.json
+```
+
+**Bénéfices** :
+- **Source de vérité unique** : plus de mirror, plus de désynchronisation possible
+- **Isolation naturelle multi-workspace** : chaque projet a son propre runtime, pas de mélange
+- **Debug facile** : tout est visible dans le workspace, pas besoin d'aller fouiller `~/.claude/plugins/data/`
+- **Plus de problème de propagation des variables d'env** : seul `CLAUDE_PROJECT_DIR` ou `cwd` est nécessaire
+- **Nettoyage trivial** : supprimer le dossier `.todomail/` réinitialise complètement l'état runtime pour ce workspace
+
+**Modifications** :
+- `lib/state.py` : `runtime_dir()` exposé, `workspace_dir()` strict (lève si workspace introuvable), suppression de `_workspace_mirror_path` et `_discover_plugin_data`.
+- `hooks/session_start.py`, `hooks/invalidate_dashboard_cache.py`, `hooks/pre_compact.py` : tous écrivent dans `.todomail/`.
+- `skills/dashboard.html` : lecture via `getDirectoryHandle('.todomail')` puis `state.json` / `invalidate.txt` ; les marqueurs retry/dismiss y sont aussi écrits.
+- `commands/start.md` : `.todomail/` ajouté à la liste des répertoires à créer.
+- `.gitignore` : `.todomail/` remplace les entrées éparses (`.todomail-state.json`, `dashboard_invalidate.txt`, `retry_request.txt`, `errors_dismiss.txt`, `.plugin-data/`).
+- Tests `hooks/tests/test_hooks.sh` adaptés aux nouveaux chemins.
+
+**Migration** : aucun script automatique. Pour les utilisateurs alpha.7 ou antérieurs qui passent à alpha.8, le `state.json` actuel ne contenait que des checkpoints historiques sans valeur actionnable (errors vides, lock null). Au premier `/todomail:start` après l'install, `lib/state.py` créera un nouveau `state.json` vierge dans `$CLAUDE_PROJECT_DIR/.todomail/`. Les anciens fichiers à la racine du workspace (`.todomail-state.json`, `dashboard_invalidate.txt`) deviennent du bruit inoffensif et peuvent être supprimés manuellement.
+
+---
+
 ## [2.0.0-alpha.7] - 2026-04-18
 
 ### Supprimé

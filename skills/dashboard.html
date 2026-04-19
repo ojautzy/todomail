@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Todomail - Dashboard Cowork</title>
+    <title>Todomail - Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -105,6 +105,25 @@
             return [];
         }
 
+        // Variante v2 : renvoie aussi le bloc _meta pour le banner de fraicheur.
+        function extractEmailsAndMeta(data) {
+            if (Array.isArray(data)) return { emails: data, meta: null };
+            if (data && Array.isArray(data.emails)) {
+                return { emails: data.emails, meta: data._meta || null };
+            }
+            return { emails: [], meta: null };
+        }
+
+        // Retro-compat lecture instructions.json : v1 (tableau brut) ou
+        // v2 (wrapper { "_meta": ..., "instructions": [...] }).
+        function extractInstructionsAndMeta(data) {
+            if (Array.isArray(data)) return { instructions: data, meta: null };
+            if (data && Array.isArray(data.instructions)) {
+                return { instructions: data.instructions, meta: data._meta || null };
+            }
+            return { instructions: [], meta: null };
+        }
+
         // Extract recipient display name from filename like "jean-martin_01.md"
         function recipientFromFilename(filename) {
             const base = filename.replace(/\.md$/, '');
@@ -118,9 +137,73 @@
             await parentHandle.removeEntry(dirName, { recursive: true });
         }
 
+        // ========== PHASE 5 — Persistance du DirectoryHandle via IndexedDB ==========
+        // Le navigateur peut persister un FileSystemDirectoryHandle entre sessions.
+        // Apres la premiere autorisation, on evite le picker a chaque rechargement :
+        // un simple queryPermission() suffit, et si l'autorisation a survecu
+        // (cas typique en session Chromium/DIA), l'utilisateur ne voit rien du tout.
+
+        const DB_NAME = 'todomail-dashboard';
+        const DB_STORE = 'handles';
+        const DB_KEY = 'rootHandle';
+
+        function openHandleDb() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open(DB_NAME, 1);
+                req.onupgradeneeded = () => {
+                    req.result.createObjectStore(DB_STORE);
+                };
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        }
+
+        async function saveHandle(handle) {
+            try {
+                const db = await openHandleDb();
+                await new Promise((resolve, reject) => {
+                    const tx = db.transaction(DB_STORE, 'readwrite');
+                    tx.objectStore(DB_STORE).put(handle, DB_KEY);
+                    tx.oncomplete = () => resolve();
+                    tx.onerror = () => reject(tx.error);
+                });
+                db.close();
+            } catch (e) { console.warn('IndexedDB saveHandle:', e); }
+        }
+
+        async function loadHandle() {
+            try {
+                const db = await openHandleDb();
+                const handle = await new Promise((resolve, reject) => {
+                    const tx = db.transaction(DB_STORE, 'readonly');
+                    const req = tx.objectStore(DB_STORE).get(DB_KEY);
+                    req.onsuccess = () => resolve(req.result || null);
+                    req.onerror = () => reject(req.error);
+                });
+                db.close();
+                return handle;
+            } catch (e) { console.warn('IndexedDB loadHandle:', e); return null; }
+        }
+
+        async function clearHandle() {
+            try {
+                const db = await openHandleDb();
+                await new Promise((resolve, reject) => {
+                    const tx = db.transaction(DB_STORE, 'readwrite');
+                    tx.objectStore(DB_STORE).delete(DB_KEY);
+                    tx.oncomplete = () => resolve();
+                    tx.onerror = () => reject(tx.error);
+                });
+                db.close();
+            } catch (e) { console.warn('IndexedDB clearHandle:', e); }
+        }
+
         function App() {
             const [isDark, setIsDark] = useState(false);
             const [rootHandle, setRootHandle] = useState(null);
+            const [browserSupported] = useState(() => typeof window.showDirectoryPicker === 'function');
+            const [reconnecting, setReconnecting] = useState(true); // tentative reconnexion auto au mount
+            const [pendingHandle, setPendingHandle] = useState(null); // handle memorise en attente de permission
             const [emails, setEmails] = useState([]);
             const [searchTerm, setSearchTerm] = useState("");
             const [selectedMail, setSelectedMail] = useState(null);
@@ -143,8 +226,38 @@
             const [copiedField, setCopiedField] = useState(null); // "to:filename" or "body:filename"
             const [taskCounts, setTaskCounts] = useState({ consult: 0, "to-send": 0, "to-work": 0 });
 
+            // ========== PHASE 5 — watch + versioning + erreurs + memoire ==========
+            const [pendingMeta, setPendingMeta] = useState(null);          // _meta du pending_emails.json courant
+            const [instructionsMeta, setInstructionsMeta] = useState(null); // _meta du instructions.json courant
+            const [workspaceState, setWorkspaceState] = useState(null);    // contenu de .todomail/state.json
+            const [invalidateStamp, setInvalidateStamp] = useState(null);  // lastModified de .todomail/invalidate.txt
+            const [errorsPanelOpen, setErrorsPanelOpen] = useState(false);
+            const [dismissedIds, setDismissedIds] = useState(new Set());    // IDs retires cote UI apres bouton Ignorer
+
+            // Etat vue Memoire
+            const [memorySection, setMemorySection] = useState('claude');   // 'claude' | 'people' | 'projects' | 'context'
+            const [memoryFiles, setMemoryFiles] = useState([]);             // [{ name, path, content }]
+            const [memorySearch, setMemorySearch] = useState('');
+            const [expandedMemoryCard, setExpandedMemoryCard] = useState(null);
+            const [memoryCounts, setMemoryCounts] = useState({ claude: 0, people: 0, projects: 0, context: 0 });
+
             const activeConfig = SUBDIRS.find(s => s.key === activeSubdir);
             const defaultAction = activeSubdir === 'trash' ? 'delete' : 'other';
+
+            const currentSessionId = workspaceState && workspaceState.session_id ? workspaceState.session_id : null;
+            const activeLock = workspaceState && workspaceState.active_lock ? workspaceState.active_lock : null;
+            const isLocked = !!activeLock;
+            const rawErrors = (workspaceState && Array.isArray(workspaceState.errors)) ? workspaceState.errors : [];
+            const displayedErrors = rawErrors.filter(e => !dismissedIds.has(e.mail_id));
+            const errorsCount = displayedErrors.length;
+
+            // Banner de fraicheur retire en alpha.8 post-test : la comparaison
+            // session_id entre pending_emails.json._meta et state.json generait
+            // des faux positifs permanents (sort-mails ecrit un UUID custom,
+            // lib.state un timestamp). Le polling 3s + le rechargement a chaque
+            // switchSubdir + le verrou visuel pendant un cycle suffisent a
+            // garantir la coherence visible. La normalisation des session_id
+            // est reportee en Phase 6 (voir CHANGELOG alpha.8).
 
             useEffect(() => {
                 if (isDark) document.documentElement.classList.add('dark');
@@ -171,7 +284,7 @@
                         const categoryDir = await todoDir.getDirectoryHandle(subdir.key);
                         const fileHandle = await categoryDir.getFileHandle('pending_emails.json');
                         const data = JSON.parse(await (await fileHandle.getFile()).text());
-                        const emails = extractEmails(data);
+                        const { emails } = extractEmailsAndMeta(data);
                         newCounts[subdir.key] = emails.length;
                     } catch (err) {
                         newCounts[subdir.key] = 0;
@@ -180,15 +293,133 @@
                 setCounts(newCounts);
             };
 
-            const connectFolder = async () => {
-                try {
-                    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-                    setRootHandle(handle);
-                    loadSubdirEmails(handle, activeSubdir);
-                    loadAllCounts(handle);
-                    loadTaskCounts(handle);
-                } catch (err) { console.error(err); }
+            // Garantit qu'un instructions.json existe pour chaque categorie non
+            // vide, ecrit avec les decisions par defaut (delete pour trash,
+            // other pour les autres). Sans cela, /process-todo ne traite que
+            // les categories ouvertes par l'utilisateur dans le dashboard
+            // (les loadSubdirEmails n'etant declenche que sur switchSubdir).
+            // Idempotent : ne touche jamais un instructions.json existant.
+            const ensureAllInstructions = async (handle) => {
+                if (isLocked) return; // ne pas ecrire pendant qu'un cycle Claude tourne
+                for (const subdir of SUBDIRS) {
+                    try {
+                        const todoDir = await handle.getDirectoryHandle('todo');
+                        const categoryDir = await todoDir.getDirectoryHandle(subdir.key);
+                        // Lire pending_emails — skip si vide ou inexistant
+                        let pendingData;
+                        try {
+                            const pFh = await categoryDir.getFileHandle('pending_emails.json');
+                            pendingData = JSON.parse(await (await pFh.getFile()).text());
+                        } catch (_) { continue; }
+                        const { emails } = extractEmailsAndMeta(pendingData);
+                        if (emails.length === 0) continue;
+                        // Ne pas ecraser un instructions.json existant
+                        try {
+                            await categoryDir.getFileHandle('instructions.json');
+                            continue; // existe deja, skip
+                        } catch (_) { /* absent, on va l'ecrire */ }
+                        const defAction = subdir.key === 'trash' ? 'delete' : 'other';
+                        const defaults = {};
+                        emails.forEach(e => { defaults[e.id] = defAction; });
+                        await writeInstructions(handle, subdir.key, emails, defaults);
+                    } catch (_) { /* categorie absente, skip */ }
+                }
             };
+
+            const bootstrapHandle = async (handle) => {
+                setRootHandle(handle);
+                setPendingHandle(null);
+                loadSubdirEmails(handle, activeSubdir);
+                loadAllCounts(handle);
+                loadTaskCounts(handle);
+                readWorkspaceState(handle).then(s => s && setWorkspaceState(s));
+                readInvalidateStamp(handle).then(st => st && setInvalidateStamp(st));
+                // Ecrit les instructions.json par defaut pour toutes les categories
+                // non vides qui n'en ont pas — process-todo doit pouvoir traiter
+                // les mails meme sans interaction utilisateur dans le dashboard.
+                ensureAllInstructions(handle);
+                await saveHandle(handle);
+            };
+
+            const connectFolder = async () => {
+                if (!browserSupported) return;
+                try {
+                    // En mode file://, startIn avec un handle d'une origine
+                    // precedente fait planter le picker (ne resout jamais).
+                    // On omet donc startIn — l'utilisateur navigue depuis le
+                    // dossier par defaut.
+                    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+                    await bootstrapHandle(handle);
+                } catch (err) {
+                    if (err && err.name !== 'AbortError') console.error(err);
+                }
+            };
+
+            const reconnectPending = async () => {
+                console.log('[todomail] reconnectPending START, pendingHandle?', !!pendingHandle);
+                if (!pendingHandle) return;
+                // En mode file://, chaque chargement de page est une origine
+                // unique. Donc `startIn: pendingHandle` (handle issu d'IndexedDB
+                // d'une origine precedente) cause un picker qui ouvre puis ne
+                // resout jamais (bug constate via DevTools). On l'omet pour
+                // garantir que le picker fonctionne correctement.
+                let handle;
+                try {
+                    console.log('[todomail] calling showDirectoryPicker (no startIn)...');
+                    handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+                    console.log('[todomail] picker resolved with handle:', handle && handle.name);
+                } catch (err) {
+                    console.warn('[todomail] picker threw:', err && err.name, err && err.message);
+                    return;
+                }
+                if (!handle) {
+                    console.warn('[todomail] picker returned no handle');
+                    return;
+                }
+                try {
+                    console.log('[todomail] calling bootstrapHandle...');
+                    await bootstrapHandle(handle);
+                    console.log('[todomail] bootstrapHandle done');
+                } catch (err) {
+                    console.error('[todomail] bootstrapHandle failed:', err);
+                }
+            };
+
+            const forgetWorkspace = async () => {
+                await clearHandle();
+                setPendingHandle(null);
+                setRootHandle(null);
+            };
+
+            // Reconnexion automatique au mount : lit IndexedDB. Si la permission
+            // est encore active (Chromium peut la memoriser apres un reload),
+            // un test silencieux d'acces fonctionne et on rebranche sans clic.
+            // Sinon on bascule sur le bouton « Reprendre la connexion ».
+            // On evite deliberement queryPermission/requestPermission qui se
+            // comportent mal sur les handles persistes (cf. fallback picker
+            // dans reconnectPending).
+            useEffect(() => {
+                if (!browserSupported) { setReconnecting(false); return; }
+                (async () => {
+                    try {
+                        const stored = await loadHandle();
+                        if (!stored) { setReconnecting(false); return; }
+                        // Test silencieux d'acces : tenter de lister une entree.
+                        // Si la permission est encore granted, ca passe sans dialog.
+                        // Sinon, ca jette et on attend le clic utilisateur.
+                        try {
+                            // eslint-disable-next-line no-unused-vars
+                            for await (const _entry of stored.values()) break;
+                            console.log('[todomail] auto-reconnect OK (silent access)');
+                            await bootstrapHandle(stored);
+                        } catch (_) {
+                            console.log('[todomail] silent access denied, waiting for user click');
+                            setPendingHandle(stored);
+                        }
+                    } catch (e) { console.warn('[todomail] reconnect mount failed:', e); }
+                    setReconnecting(false);
+                })();
+            }, [browserSupported]);
 
             const writeInstructions = async (handle, subdirKey, emailsList, decisionsMap) => {
                 try {
@@ -207,42 +438,58 @@
                 }
             };
 
-            const loadSubdirEmails = async (handle, subdirKey) => {
+            const loadSubdirEmails = async (handle, subdirKey, options = {}) => {
+                const { preserveUi = false } = options;
                 try {
                     const todoDir = await handle.getDirectoryHandle('todo');
                     const categoryDir = await todoDir.getDirectoryHandle(subdirKey);
                     const fileHandle = await categoryDir.getFileHandle('pending_emails.json');
                     const data = JSON.parse(await (await fileHandle.getFile()).text());
-                    const emails = extractEmails(data);
+                    const { emails, meta } = extractEmailsAndMeta(data);
                     setEmails(emails);
-                    setSearchTerm("");
-                    setExpandedCard(null);
+                    setPendingMeta(meta);
+                    if (!preserveUi) {
+                        setSearchTerm("");
+                        setExpandedCard(null);
+                    }
                     setCounts(prev => ({ ...prev, [subdirKey]: emails.length }));
 
                     const defAction = subdirKey === 'trash' ? 'delete' : 'other';
                     let loadedDecisions = {};
+                    let loadedInstrMeta = null;
                     try {
                         const instrFile = await categoryDir.getFileHandle('instructions.json');
                         const instrData = JSON.parse(await (await instrFile.getFile()).text());
-                        const instrList = Array.isArray(instrData)
-                            ? instrData
-                            : (instrData && Array.isArray(instrData.instructions) ? instrData.instructions : []);
+                        const { instructions: instrList, meta: instrMeta } = extractInstructionsAndMeta(instrData);
+                        loadedInstrMeta = instrMeta;
                         if (instrList.length > 0) {
                             instrList.forEach(instr => { loadedDecisions[instr.id] = instr.action; });
                         }
                     } catch (_) {}
+                    setInstructionsMeta(loadedInstrMeta);
+                    const hadInstructionsFile = Object.keys(loadedDecisions).length > 0 || loadedInstrMeta !== null;
                     emails.forEach(e => {
                         if (!loadedDecisions[e.id]) loadedDecisions[e.id] = defAction;
                     });
                     setDecisions(loadedDecisions);
-                    if (emails.length > 0) {
+                    // Phase 5 : ecriture initiale conditionnelle. On n'ecrit
+                    // les decisions par defaut que si le fichier est absent (ou
+                    // vide) — pour que /process-todo ait quelque chose a traiter
+                    // meme si l'utilisateur ne touche a rien. Si un instructions.json
+                    // existe deja (ecrit par un cycle precedent ou par Claude),
+                    // on ne l'ecrase pas.
+                    if (!hadInstructionsFile && emails.length > 0 && !isLocked) {
                         writeInstructions(handle, subdirKey, emails, loadedDecisions);
                     }
                 } catch (err) {
                     setEmails([]);
+                    setPendingMeta(null);
+                    setInstructionsMeta(null);
                     setDecisions({});
-                    setSearchTerm("");
-                    setExpandedCard(null);
+                    if (!preserveUi) {
+                        setSearchTerm("");
+                        setExpandedCard(null);
+                    }
                     setCounts(prev => ({ ...prev, [subdirKey]: 0 }));
                 }
             };
@@ -253,6 +500,253 @@
                 setExpandedCard(null);
                 if (rootHandle) loadSubdirEmails(rootHandle, subdirKey);
             };
+
+            // ========== PHASE 5 — Polling 3s sur .todomail/state.json + .todomail/invalidate.txt ==========
+
+            const getRuntimeDir = async (handle) => {
+                try {
+                    return await handle.getDirectoryHandle('.todomail');
+                } catch (_) {
+                    return null;
+                }
+            };
+
+            const readWorkspaceState = async (handle) => {
+                try {
+                    const rt = await getRuntimeDir(handle);
+                    if (!rt) return null;
+                    const fh = await rt.getFileHandle('state.json');
+                    const file = await fh.getFile();
+                    const content = await file.text();
+                    return JSON.parse(content);
+                } catch (_) {
+                    return null;
+                }
+            };
+
+            const readInvalidateStamp = async (handle) => {
+                try {
+                    const rt = await getRuntimeDir(handle);
+                    if (!rt) return null;
+                    const fh = await rt.getFileHandle('invalidate.txt');
+                    const file = await fh.getFile();
+                    return file.lastModified;
+                } catch (_) {
+                    return null;
+                }
+            };
+
+            const refreshAll = async (handle, opts = {}) => {
+                await Promise.all([
+                    loadSubdirEmails(handle, activeSubdir, { preserveUi: true }),
+                    loadAllCounts(handle),
+                    loadTaskCounts(handle),
+                ]);
+                // Apres un cycle Claude (sort-mails ajoute des mails), garantir
+                // qu'un instructions.json par defaut existe pour les nouvelles
+                // categories non vides — sans cela le prochain process-todo
+                // ignorerait les nouveaux mails.
+                ensureAllInstructions(handle);
+                if (opts.withToast) showToast('refreshed');
+            };
+
+            // Polling 3s : compare invalidate stamp + detecte changement de session_id
+            useEffect(() => {
+                if (!rootHandle) return;
+                let cancelled = false;
+                let prevStamp = invalidateStamp;
+                let prevSessionId = currentSessionId;
+                let prevLock = activeLock;
+                let prevErrorsHash = JSON.stringify(rawErrors.map(e => e.mail_id));
+
+                const tick = async () => {
+                    if (cancelled) return;
+                    const [stamp, state] = await Promise.all([
+                        readInvalidateStamp(rootHandle),
+                        readWorkspaceState(rootHandle),
+                    ]);
+                    if (cancelled) return;
+
+                    const newSessionId = state && state.session_id ? state.session_id : null;
+                    const newLock = state && state.active_lock ? state.active_lock : null;
+                    const newErrorsHash = JSON.stringify((state && Array.isArray(state.errors) ? state.errors : []).map(e => e.mail_id));
+
+                    const stampChanged = stamp && stamp !== prevStamp;
+                    const sessionChanged = newSessionId && newSessionId !== prevSessionId;
+                    const lockReleased = prevLock && !newLock;
+                    const errorsChanged = newErrorsHash !== prevErrorsHash;
+
+                    if (state) setWorkspaceState(state);
+                    if (stamp) setInvalidateStamp(stamp);
+
+                    if (stampChanged || sessionChanged || lockReleased || errorsChanged) {
+                        try { await refreshAll(rootHandle, { withToast: lockReleased }); } catch (_) {}
+                    }
+
+                    prevStamp = stamp || prevStamp;
+                    prevSessionId = newSessionId || prevSessionId;
+                    prevLock = newLock;
+                    prevErrorsHash = newErrorsHash;
+                };
+
+                // Premier tick immediat puis interval 3s
+                tick();
+                const id = setInterval(tick, 3000);
+                return () => { cancelled = true; clearInterval(id); };
+            }, [rootHandle, activeSubdir]);
+
+            // ========== PHASE 5 — Fichiers-marqueurs retry / dismiss ==========
+
+            const writeMarkerFile = async (filename, lines) => {
+                if (!rootHandle) return false;
+                try {
+                    const rt = await rootHandle.getDirectoryHandle('.todomail', { create: true });
+                    const fh = await rt.getFileHandle(filename, { create: true });
+                    const writable = await fh.createWritable();
+                    const content = lines.length ? lines.join('\n') + '\n' : '';
+                    await writable.write(content);
+                    await writable.close();
+                    return true;
+                } catch (err) {
+                    console.error(`Erreur ecriture .todomail/${filename}:`, err);
+                    return false;
+                }
+            };
+
+            const requestRetryAll = async () => {
+                const ok = await writeMarkerFile('retry_request.txt', displayedErrors.map(e => e.mail_id));
+                showToast(ok ? 'saved' : 'error');
+            };
+
+            const dismissError = async (mailId) => {
+                setDismissedIds(prev => new Set([...prev, mailId]));
+                const ok = await writeMarkerFile('errors_dismiss.txt', [mailId]);
+                showToast(ok ? 'saved' : 'error');
+            };
+
+            // ========== PHASE 5 — Vue Memoire ==========
+
+            const MEMORY_SECTIONS = [
+                { key: 'claude', label: 'CLAUDE.md', icon: 'file-text' },
+                { key: 'people', label: 'Personnes', icon: 'users' },
+                { key: 'projects', label: 'Sujets', icon: 'folder-kanban' },
+                { key: 'context', label: 'Contexte', icon: 'info' },
+            ];
+
+            const loadMemoryCounts = async (handle) => {
+                const mc = { claude: 0, people: 0, projects: 0, context: 0 };
+                try { await handle.getFileHandle('CLAUDE.md'); mc.claude = 1; } catch (_) {}
+                for (const sub of ['people', 'projects', 'context']) {
+                    try {
+                        const memDir = await handle.getDirectoryHandle('memory');
+                        const dir = await memDir.getDirectoryHandle(sub);
+                        let n = 0;
+                        for await (const entry of dir.values()) {
+                            if (entry.kind === 'file' && entry.name.endsWith('.md')) n++;
+                        }
+                        mc[sub] = n;
+                    } catch (_) {}
+                }
+                setMemoryCounts(mc);
+            };
+
+            const loadMemorySection = async (handle, sectionKey) => {
+                if (sectionKey === 'claude') {
+                    try {
+                        const fh = await handle.getFileHandle('CLAUDE.md');
+                        const file = await fh.getFile();
+                        const content = await file.text();
+                        setMemoryFiles([{ name: 'CLAUDE.md', path: 'CLAUDE.md', content }]);
+                        setMemoryCounts(prev => ({ ...prev, claude: 1 }));
+                    } catch (_) {
+                        setMemoryFiles([]);
+                        setMemoryCounts(prev => ({ ...prev, claude: 0 }));
+                    }
+                    return;
+                }
+                try {
+                    const memDir = await handle.getDirectoryHandle('memory');
+                    const dir = await memDir.getDirectoryHandle(sectionKey);
+                    const files = [];
+                    for await (const entry of dir.values()) {
+                        if (entry.kind === 'file' && entry.name.endsWith('.md')) {
+                            const file = await entry.getFile();
+                            const content = await file.text();
+                            files.push({ name: entry.name, path: `memory/${sectionKey}/${entry.name}`, content });
+                        }
+                    }
+                    files.sort((a, b) => a.name.localeCompare(b.name));
+                    setMemoryFiles(files);
+                    setMemoryCounts(prev => ({ ...prev, [sectionKey]: files.length }));
+                } catch (_) {
+                    setMemoryFiles([]);
+                    setMemoryCounts(prev => ({ ...prev, [sectionKey]: 0 }));
+                }
+            };
+
+            const switchMemorySection = (sectionKey) => {
+                setMemorySection(sectionKey);
+                setMemorySearch('');
+                setExpandedMemoryCard(null);
+                if (rootHandle) loadMemorySection(rootHandle, sectionKey);
+            };
+
+            const saveMemoryFile = async () => {
+                if (!editModal || editModal.type !== 'memory') return;
+                try {
+                    if (editModal.section === 'claude') {
+                        const fh = await rootHandle.getFileHandle('CLAUDE.md', { create: true });
+                        const writable = await fh.createWritable();
+                        await writable.write(editModal.content);
+                        await writable.close();
+                    } else {
+                        const memDir = await rootHandle.getDirectoryHandle('memory');
+                        const dir = await memDir.getDirectoryHandle(editModal.section);
+                        const fh = await dir.getFileHandle(editModal.key, { create: true });
+                        const writable = await fh.createWritable();
+                        await writable.write(editModal.content);
+                        await writable.close();
+                    }
+                    await loadMemorySection(rootHandle, editModal.section);
+                    showToast('saved');
+                } catch (err) {
+                    console.error(err);
+                    showToast('error');
+                }
+                setEditModal(null);
+            };
+
+            const removeMemoryFile = async (sectionKey, filename) => {
+                try {
+                    if (sectionKey === 'claude') return;
+                    const memDir = await rootHandle.getDirectoryHandle('memory');
+                    const dir = await memDir.getDirectoryHandle(sectionKey);
+                    await dir.removeEntry(filename);
+                    await loadMemorySection(rootHandle, sectionKey);
+                    showToast('saved');
+                } catch (err) {
+                    console.error(err);
+                    showToast('error');
+                }
+                setConfirmDelete(null);
+            };
+
+            const filteredMemory = useMemo(() => {
+                const term = memorySearch.toLowerCase();
+                if (!term) return memoryFiles;
+                return memoryFiles.filter(f =>
+                    f.name.toLowerCase().includes(term) ||
+                    f.content.toLowerCase().includes(term)
+                );
+            }, [memoryFiles, memorySearch]);
+
+            // Charge memoire quand on bascule vers la vue
+            useEffect(() => {
+                if (activeView === 'memory' && rootHandle) {
+                    loadMemoryCounts(rootHandle);
+                    loadMemorySection(rootHandle, memorySection);
+                }
+            }, [activeView]);
 
             const filteredEmails = useMemo(() => {
                 const term = searchTerm.toLowerCase();
@@ -299,12 +793,14 @@
             };
 
             const updateDecision = (mailId, action) => {
+                if (isLocked) return;
                 const newDecisions = { ...decisions, [mailId]: action };
                 setDecisions(newDecisions);
                 if (rootHandle) writeInstructions(rootHandle, activeSubdir, emails, newDecisions);
             };
 
             const bulkAction = (sender, action) => {
+                if (isLocked) return;
                 const newDecisions = { ...decisions };
                 emails.forEach(mail => {
                     if (mail.sender === sender) newDecisions[mail.id] = action;
@@ -497,6 +993,10 @@
 
             const saveEditModal = async () => {
                 if (!editModal) return;
+                if (editModal.type === 'memory') {
+                    await saveMemoryFile();
+                    return;
+                }
                 try {
                     if (editModal.type === 'to-send') {
                         const dir = await rootHandle.getDirectoryHandle('to-send');
@@ -612,6 +1112,51 @@
                 return 'file';
             };
 
+            // Ecran plein page : navigateur sans File System Access API
+            if (!browserSupported) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center p-8 bg-slate-50 dark:bg-darkBg">
+                        <div className="max-w-xl bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-3xl shadow-xl p-8 animate-slide-up">
+                            <div className="inline-flex items-center justify-center w-14 h-14 bg-red-100 dark:bg-red-900/30 text-red-600 rounded-2xl mb-4">
+                                <Icon name="alert-octagon" size={28} />
+                            </div>
+                            <h1 className="text-xl font-black mb-2">Navigateur non supporté</h1>
+                            <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
+                                Ce dashboard utilise l'API <code className="font-mono text-xs bg-slate-100 dark:bg-slate-800 px-1 rounded">File System Access</code> pour lire et écrire dans ton dossier de travail. Cette API n'est disponible que dans les navigateurs Chromium.
+                            </p>
+                            <div className="bg-slate-50 dark:bg-slate-900 rounded-xl p-4 text-sm">
+                                <div className="font-bold text-emerald-600 mb-2 flex items-center gap-2"><Icon name="check-circle" size={14} /> Navigateurs supportés</div>
+                                <ul className="text-slate-600 dark:text-slate-300 space-y-1 text-xs pl-6 list-disc">
+                                    <li>Google Chrome, Microsoft Edge, Arc</li>
+                                    <li>DIA (dérivé Chromium)</li>
+                                    <li>Opera, Brave, Vivaldi (Chromium)</li>
+                                </ul>
+                                <div className="font-bold text-red-600 mt-4 mb-2 flex items-center gap-2"><Icon name="x-circle" size={14} /> Navigateurs non supportés</div>
+                                <ul className="text-slate-600 dark:text-slate-300 space-y-1 text-xs pl-6 list-disc">
+                                    <li>Safari, Orion (WebKit — Apple refuse l'API)</li>
+                                    <li>Firefox</li>
+                                </ul>
+                            </div>
+                            <p className="text-xs text-slate-500 mt-4">
+                                Ouvre ce fichier dans un navigateur Chromium pour utiliser le dashboard. Un mode compatible universel (micro-serveur local) est envisagé pour une future version.
+                            </p>
+                        </div>
+                    </div>
+                );
+            }
+
+            // Ecran transitoire : tentative de reconnexion au handle persiste
+            if (reconnecting && !rootHandle) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center">
+                        <div className="inline-flex items-center gap-3 text-slate-500">
+                            <Icon name="loader" size={20} className="animate-spin" />
+                            <span className="text-sm font-medium">Reconnexion au projet…</span>
+                        </div>
+                    </div>
+                );
+            }
+
             return (
                 <div className="min-h-screen flex flex-col">
                     {/* TOP NAV */}
@@ -630,7 +1175,7 @@
                             <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-xl p-1">
                                 {[
                                     { key: "categorization", label: "Catégorisation", icon: "inbox", enabled: true },
-                                    { key: "memory", label: "Mémoire", icon: "brain", enabled: false },
+                                    { key: "memory", label: "Mémoire", icon: "brain", enabled: true },
                                     { key: "tasks", label: "Tâches", icon: "list-checks", enabled: true },
                                 ].map(view => (
                                     <button
@@ -652,13 +1197,32 @@
                             </div>
                         </div>
 
-                        <div className="flex gap-4">
+                        <div className="flex gap-4 items-center">
                             <button onClick={() => setIsDark(!isDark)} className="p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">
                                 <Icon name={isDark ? "sun" : "moon"} />
                             </button>
-                            <button onClick={connectFolder} className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-5 py-2 rounded-xl font-bold text-sm hover:scale-105 transition-all">
-                                {rootHandle ? "Projet Connecté" : "Ouvrir Projet"}
-                            </button>
+                            {!browserSupported ? (
+                                <span className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-4 py-2 rounded-xl font-bold text-sm">
+                                    Navigateur non supporté
+                                </span>
+                            ) : rootHandle ? (
+                                <div className="flex items-center gap-2">
+                                    <span className="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 px-4 py-2 rounded-xl font-bold text-sm inline-flex items-center gap-2">
+                                        <Icon name="link" size={14} /> Projet connecté
+                                    </span>
+                                    <button onClick={forgetWorkspace} className="p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400 hover:text-red-500 transition-colors" title="Oublier ce projet (sera redemandé au prochain chargement)">
+                                        <Icon name="unlink" size={16} />
+                                    </button>
+                                </div>
+                            ) : pendingHandle ? (
+                                <button onClick={reconnectPending} className="bg-blue-600 text-white px-5 py-2 rounded-xl font-bold text-sm hover:scale-105 transition-all inline-flex items-center gap-2">
+                                    <Icon name="refresh-cw" size={14} /> Reprendre la connexion
+                                </button>
+                            ) : (
+                                <button onClick={connectFolder} className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-5 py-2 rounded-xl font-bold text-sm hover:scale-105 transition-all">
+                                    Ouvrir Projet
+                                </button>
+                            )}
                         </div>
                     </nav>
 
@@ -731,9 +1295,107 @@
                             </aside>
                         )}
 
+                        {/* SIDEBAR — MEMORY */}
+                        {rootHandle && activeView === "memory" && (
+                            <aside className="w-64 min-w-[16rem] bg-white dark:bg-darkSidebar border-r border-slate-200 dark:border-slate-800 p-4 flex flex-col gap-1.5 animate-slide-up sticky top-[73px] h-[calc(100vh-73px)] overflow-y-auto scrollbar-hide">
+                                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 px-3">Sections</div>
+                                {MEMORY_SECTIONS.map(section => {
+                                    const isActive = memorySection === section.key;
+                                    return (
+                                        <button
+                                            key={section.key}
+                                            onClick={() => switchMemorySection(section.key)}
+                                            className={`flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold transition-all w-full text-left ${
+                                                isActive
+                                                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
+                                                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-500'
+                                            }`}
+                                        >
+                                            <Icon name={section.icon} size={18} />
+                                            <span className="flex-1">{section.label}</span>
+                                            {(memoryCounts[section.key] || 0) > 0 && (
+                                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                                    isActive
+                                                        ? 'bg-white/20'
+                                                        : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                                                }`}>
+                                                    {memoryCounts[section.key]}
+                                                </span>
+                                            )}
+                                        </button>
+                                    );
+                                })}
+                            </aside>
+                        )}
+
                         {/* ZONE PRINCIPALE */}
                         <main className="flex-1 pb-12 px-6 pt-6">
                             <div className="max-w-4xl mx-auto">
+
+                                {/* ============ BANNIÈRES PHASE 5 (communes aux vues) ============ */}
+                                {rootHandle && isLocked && (
+                                    <div className="mb-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-2xl p-4 flex items-center gap-3 animate-slide-up">
+                                        <div className="animate-pulse text-blue-600"><Icon name="loader" size={20} /></div>
+                                        <div className="flex-1">
+                                            <div className="font-bold text-sm text-blue-900 dark:text-blue-200">Claude travaille…</div>
+                                            <div className="text-xs text-blue-700 dark:text-blue-300 mt-0.5">
+                                                Verrou actif : <span className="font-mono">{activeLock}</span>. Les actions sont désactivées jusqu'à la fin du cycle.
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {rootHandle && errorsCount > 0 && (
+                                    <div className="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-2xl animate-slide-up">
+                                        <button
+                                            onClick={() => setErrorsPanelOpen(!errorsPanelOpen)}
+                                            className="w-full flex items-center gap-3 p-4 text-left"
+                                        >
+                                            <div className="text-red-600"><Icon name="alert-circle" size={20} /></div>
+                                            <div className="flex-1">
+                                                <div className="font-bold text-sm text-red-900 dark:text-red-200">
+                                                    {errorsCount} erreur{errorsCount > 1 ? 's' : ''} en attente
+                                                </div>
+                                                <div className="text-xs text-red-700 dark:text-red-300 mt-0.5">
+                                                    {errorsPanelOpen ? "Masquer le détail" : "Afficher le détail et les actions de reprise"}
+                                                </div>
+                                            </div>
+                                            <Icon name={errorsPanelOpen ? "chevron-up" : "chevron-down"} size={18} />
+                                        </button>
+                                        {errorsPanelOpen && (
+                                            <div className="border-t border-red-200 dark:border-red-800 px-4 py-3">
+                                                <div className="flex items-center justify-end gap-2 mb-3">
+                                                    <button
+                                                        disabled={isLocked}
+                                                        onClick={requestRetryAll}
+                                                        className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-colors ${isLocked ? 'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600 text-white'}`}
+                                                    >
+                                                        Retry tous
+                                                    </button>
+                                                </div>
+                                                <ul className="space-y-2">
+                                                    {displayedErrors.map(e => (
+                                                        <li key={e.mail_id} className="flex items-start gap-3 bg-white dark:bg-darkCard rounded-xl p-3 text-xs">
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="font-mono font-bold text-slate-700 dark:text-slate-200 truncate">{e.mail_id}</div>
+                                                                <div className="text-slate-500 dark:text-slate-400 mt-0.5">
+                                                                    <span className="font-bold">{e.phase || "?"}</span> · {e.error_type || "Erreur"} · tentative {e.retry_count || 0}
+                                                                </div>
+                                                                {e.message && <div className="text-slate-400 mt-1 line-clamp-2">{e.message}</div>}
+                                                            </div>
+                                                            <button
+                                                                onClick={() => dismissError(e.mail_id)}
+                                                                className="text-[10px] font-bold bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 px-2 py-1 rounded-md transition-colors"
+                                                            >
+                                                                Ignorer
+                                                            </button>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
 
                                 {/* ============ CATEGORIZATION VIEW ============ */}
                                 {activeView === "categorization" && (<>
@@ -771,8 +1433,9 @@
                                                             <span className="font-bold text-slate-800 dark:text-slate-100">{mail.sender}</span>
                                                             <span className="text-[10px] text-slate-400 font-mono">{mail.date}</span>
                                                             <button
+                                                                disabled={isLocked}
                                                                 onClick={(e) => { e.stopPropagation(); bulkAction(mail.sender, 'delete'); }}
-                                                                className="hidden group-hover:flex items-center gap-1 text-[10px] bg-red-100 dark:bg-red-900/30 text-red-600 px-2 py-0.5 rounded-full font-bold transition-all"
+                                                                className={`hidden group-hover:flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold transition-all ${isLocked ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed' : 'bg-red-100 dark:bg-red-900/30 text-red-600'}`}
                                                             >
                                                                 <Icon name="zap" size={10} /> Tout supprimer
                                                             </button>
@@ -818,9 +1481,10 @@
                                                             <Icon name={isExpanded ? "chevron-up" : "chevron-down"} size={18} />
                                                         </button>
                                                         <select
+                                                            disabled={isLocked}
                                                             value={decisions[mail.id] || defaultAction}
                                                             onChange={(e) => updateDecision(mail.id, e.target.value)}
-                                                            className={`text-xs font-bold p-2 rounded-lg border-none outline-none cursor-pointer transition-colors ${getSelectStyle(mail.id)}`}
+                                                            className={`text-xs font-bold p-2 rounded-lg border-none outline-none transition-colors ${isLocked ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'} ${getSelectStyle(mail.id)}`}
                                                         >
                                                             <option value="keep">GARDER</option>
                                                             {activeSubdir !== 'trash' && (
@@ -1220,6 +1884,109 @@
                                     )}
                                 </>)}
 
+                                {/* ============ MEMORY VIEW ============ */}
+                                {activeView === "memory" && rootHandle && (<>
+                                    <div className="mb-6 animate-slide-up">
+                                        <div className="relative group">
+                                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-500 transition-colors">
+                                                <Icon name="search" size={18} />
+                                            </div>
+                                            <input
+                                                type="text"
+                                                placeholder={`Filtrer dans ${MEMORY_SECTIONS.find(s => s.key === memorySection)?.label || ''}...`}
+                                                value={memorySearch}
+                                                onChange={(e) => setMemorySearch(e.target.value)}
+                                                className="w-full bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-2xl py-4 pl-12 pr-4 shadow-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
+                                            />
+                                            {memorySearch && (
+                                                <div className="absolute inset-y-0 right-4 flex items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                                    {filteredMemory.length} résultat(s)
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        {filteredMemory.map((file) => {
+                                            const isExpanded = expandedMemoryCard === file.name;
+                                            const preview = file.content.replace(/\s+/g, ' ').slice(0, 240);
+                                            const isConfirming = confirmDelete && confirmDelete.type === 'memory' && confirmDelete.key === file.name;
+                                            return (
+                                                <div key={file.name} className="animate-slide-up bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-2xl group hover:shadow-xl transition-all">
+                                                    <div className="flex items-center">
+                                                        <div className="flex-1 p-5 cursor-pointer" onClick={() => setExpandedMemoryCard(isExpanded ? null : file.name)}>
+                                                            <div className="flex items-center gap-3 mb-1">
+                                                                <span className="font-bold text-slate-800 dark:text-slate-100">{file.name}</span>
+                                                                <span className="text-[10px] text-slate-400 font-mono">{file.path}</span>
+                                                            </div>
+                                                            <p className="text-sm text-slate-500 line-clamp-2">{preview || "\u2014"}</p>
+                                                        </div>
+                                                        <div className="p-5 flex items-center gap-2">
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); setEditModal({ type: 'memory', section: memorySection, key: file.name, content: file.content }); }}
+                                                                className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-blue-500 transition-colors"
+                                                                title="Éditer"
+                                                            >
+                                                                <Icon name="edit-3" size={18} />
+                                                            </button>
+                                                            {memorySection !== 'claude' && (
+                                                                isConfirming ? (
+                                                                    <>
+                                                                        <button
+                                                                            onClick={(e) => { e.stopPropagation(); removeMemoryFile(memorySection, file.name); }}
+                                                                            className="p-2 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-600 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
+                                                                            title="Confirmer la suppression"
+                                                                        >
+                                                                            <Icon name="check" size={18} />
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={(e) => { e.stopPropagation(); setConfirmDelete(null); }}
+                                                                            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition-colors"
+                                                                            title="Annuler"
+                                                                        >
+                                                                            <Icon name="x" size={18} />
+                                                                        </button>
+                                                                    </>
+                                                                ) : (
+                                                                    <button
+                                                                        onClick={(e) => { e.stopPropagation(); setConfirmDelete({ type: 'memory', key: file.name, label: file.name }); }}
+                                                                        className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-red-500 transition-colors"
+                                                                        title="Supprimer"
+                                                                    >
+                                                                        <Icon name="trash-2" size={18} />
+                                                                    </button>
+                                                                )
+                                                            )}
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); setExpandedMemoryCard(isExpanded ? null : file.name); }}
+                                                                className={`p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-blue-500 transition-all ${isExpanded ? 'text-blue-500 bg-blue-50 dark:bg-blue-900/20' : ''}`}
+                                                                title="Voir le contenu"
+                                                            >
+                                                                <Icon name={isExpanded ? "chevron-up" : "chevron-down"} size={18} />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                    <div className={`card-expand ${isExpanded ? 'open' : ''}`}>
+                                                        <div className="card-expand-inner px-5 pb-5 border-t border-slate-200 dark:border-slate-800 pt-4">
+                                                            <pre className="whitespace-pre-wrap font-mono text-xs text-slate-600 dark:text-slate-300">{file.content}</pre>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                        {filteredMemory.length === 0 && (
+                                            <div className="text-center py-12">
+                                                <div className="inline-flex items-center justify-center w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full text-slate-400 mb-4">
+                                                    <Icon name="brain" size={32} />
+                                                </div>
+                                                <p className="text-slate-500 font-medium">
+                                                    {memorySearch ? "Aucun fichier ne correspond." : "Aucun fichier mémoire dans cette section."}
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </>)}
+
                             </div>
                         </main>
                     </div>
@@ -1227,12 +1994,14 @@
                     {/* INDICATEUR DE SAUVEGARDE */}
                     {saveStatus && (
                         <div className={`fixed bottom-6 right-6 z-30 px-4 py-2.5 rounded-xl text-sm font-bold shadow-lg transition-all animate-slide-up flex items-center gap-2 ${
-                            saveStatus === 'saved'
-                                ? 'bg-emerald-500 text-white'
-                                : 'bg-red-500 text-white'
+                            saveStatus === 'saved' ? 'bg-emerald-500 text-white'
+                            : saveStatus === 'refreshed' ? 'bg-blue-500 text-white'
+                            : 'bg-red-500 text-white'
                         }`}>
-                            <Icon name={saveStatus === 'saved' ? 'check-circle' : 'alert-circle'} size={16} />
-                            {saveStatus === 'saved' ? 'Sauvegardé' : 'Erreur de sauvegarde'}
+                            <Icon name={saveStatus === 'error' ? 'alert-circle' : saveStatus === 'refreshed' ? 'refresh-cw' : 'check-circle'} size={16} />
+                            {saveStatus === 'saved' ? 'Sauvegardé'
+                                : saveStatus === 'refreshed' ? 'Données actualisées'
+                                : 'Erreur de sauvegarde'}
                         </div>
                     )}
 
@@ -1291,7 +2060,9 @@
                                 <div className="p-6 border-b dark:border-slate-800 flex justify-between items-center">
                                     <div>
                                         <h2 className="text-lg font-black">
-                                            {editModal.type === 'to-send' ? `Éditer : ${editModal.key}` : `Éditer checklist : ${editModal.key}`}
+                                            {editModal.type === 'to-send' ? `Éditer : ${editModal.key}`
+                                                : editModal.type === 'memory' ? `Éditer mémoire : ${editModal.key}`
+                                                : `Éditer checklist : ${editModal.key}`}
                                         </h2>
                                     </div>
                                     <div className="flex items-center gap-2">
