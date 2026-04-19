@@ -356,35 +356,26 @@
             };
 
             const reconnectPending = async () => {
+                console.log('[todomail] reconnectPending click, pendingHandle?', !!pendingHandle);
                 if (!pendingHandle) return;
-                // Tentative 1 : requestPermission silencieux. Marche tant que
-                // Chromium memorise encore la permission de la session
-                // precedente. Mais apres fermeture de l'onglet, le retour
-                // peut etre 'prompt' ou 'denied' sans afficher de dialog
-                // (bug connu Chromium sur les handles persistes via IndexedDB).
-                let granted = false;
-                try {
-                    const perm = await pendingHandle.requestPermission({ mode: 'readwrite' });
-                    granted = (perm === 'granted');
-                } catch (err) { console.warn('requestPermission failed:', err); }
-                if (granted) {
-                    await bootstrapHandle(pendingHandle);
-                    return;
-                }
-                // Tentative 2 : fallback picker pre-pointe sur le dossier
-                // memorise. L'utilisateur doit re-confirmer en un clic, mais
-                // n'a pas a re-naviguer dans son arborescence. La transient
-                // user activation du clic « Reprendre la connexion » est
-                // toujours valide (~5s) pour cet appel.
+                // Approche directe : showDirectoryPicker pre-pointe sur le
+                // dossier memorise. Plus fiable que requestPermission qui peut
+                // echouer silencieusement sur les handles persistes apres
+                // fermeture d'onglet (bug Chromium connu). L'utilisateur voit
+                // un dialog mais a deja le bon dossier selectionne — un clic
+                // « Selectionner » suffit.
                 try {
                     const handle = await window.showDirectoryPicker({
                         mode: 'readwrite',
                         startIn: pendingHandle,
                     });
+                    console.log('[todomail] picker returned handle, bootstrapping...');
                     await bootstrapHandle(handle);
                 } catch (err) {
                     if (err && err.name !== 'AbortError') {
-                        console.error('reconnect picker failed:', err);
+                        console.error('[todomail] reconnect picker failed:', err);
+                    } else {
+                        console.log('[todomail] picker aborted by user');
                     }
                 }
             };
@@ -395,24 +386,32 @@
                 setRootHandle(null);
             };
 
-            // Reconnexion automatique au mount : lit IndexedDB, si handle present
-            // et permission encore 'granted', rebranche tout sans picker.
+            // Reconnexion automatique au mount : lit IndexedDB. Si la permission
+            // est encore active (Chromium peut la memoriser apres un reload),
+            // un test silencieux d'acces fonctionne et on rebranche sans clic.
+            // Sinon on bascule sur le bouton « Reprendre la connexion ».
+            // On evite deliberement queryPermission/requestPermission qui se
+            // comportent mal sur les handles persistes (cf. fallback picker
+            // dans reconnectPending).
             useEffect(() => {
                 if (!browserSupported) { setReconnecting(false); return; }
                 (async () => {
                     try {
                         const stored = await loadHandle();
                         if (!stored) { setReconnecting(false); return; }
-                        const perm = await stored.queryPermission({ mode: 'readwrite' });
-                        if (perm === 'granted') {
+                        // Test silencieux d'acces : tenter de lister une entree.
+                        // Si la permission est encore granted, ca passe sans dialog.
+                        // Sinon, ca jette et on attend le clic utilisateur.
+                        try {
+                            // eslint-disable-next-line no-unused-vars
+                            for await (const _entry of stored.values()) break;
+                            console.log('[todomail] auto-reconnect OK (silent access)');
                             await bootstrapHandle(stored);
-                        } else {
-                            // Permission expiree — on garde le handle pour un reconnect
-                            // en un clic, mais on ne reclame pas l'autorisation sans
-                            // geste utilisateur (Chromium requiert user activation).
+                        } catch (_) {
+                            console.log('[todomail] silent access denied, waiting for user click');
                             setPendingHandle(stored);
                         }
-                    } catch (e) { console.warn('reconnect failed:', e); }
+                    } catch (e) { console.warn('[todomail] reconnect mount failed:', e); }
                     setReconnecting(false);
                 })();
             }, [browserSupported]);
