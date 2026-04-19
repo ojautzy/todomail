@@ -27,6 +27,11 @@ consult.md
 # errors_dismiss.txt — tout est dans ce dossier unique.
 .todomail/
 
+# Artefacts d'anciennes versions du plugin (alpha.7 et anterieur) — peuvent
+# traîner dans des workspaces migres, on les ignore par precaution.
+.todomail-state.json
+dashboard_invalidate.txt
+
 # Refactoring plan and per-phase prompts (working documents, not part of the plugin)
 REFACTOR_PLAN.md
 refactor-prompts/
