@@ -51,6 +51,9 @@ def _log_smoke(payload: dict) -> None:
                 f"session={payload.get('session_id', '?')} "
                 f"cwd={payload.get('cwd', '?')} "
                 f"python={sys.executable} "
+                f"CLAUDE_PROJECT_DIR={os.environ.get('CLAUDE_PROJECT_DIR', '<absent>')} "
+                f"CLAUDE_PLUGIN_DATA={os.environ.get('CLAUDE_PLUGIN_DATA', '<absent>')} "
+                f"CLAUDE_PLUGIN_ROOT={os.environ.get('CLAUDE_PLUGIN_ROOT', '<absent>')} "
                 f"PATH={os.environ.get('PATH', '?')[:200]}\n"
             )
     except OSError:

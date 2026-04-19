@@ -30,11 +30,38 @@ _DEFAULT_STATE = {
 }
 
 
+def _discover_plugin_data() -> Path | None:
+    """Decouvre le repertoire CLAUDE_PLUGIN_DATA canonique du plugin todomail.
+
+    Cherche `~/.claude/plugins/data/todomail*` et retourne le repertoire
+    le plus recemment modifie (heuristique : c'est l'installation active).
+    Necessaire car les sous-processus Python lances depuis un skill
+    n'heritent pas toujours de la variable d'environnement.
+    """
+    base = Path.home() / ".claude" / "plugins" / "data"
+    if not base.is_dir():
+        return None
+    candidates = [p for p in base.glob("todomail*") if p.is_dir()]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return candidates[0]
+
+
 def _state_dir() -> Path:
-    """Resolve the directory for state.json."""
+    """Resolve the directory for state.json.
+
+    Ordre de resolution :
+    1. `$CLAUDE_PLUGIN_DATA` (defini par Claude Code aux hooks/MCP servers)
+    2. Decouverte auto dans `~/.claude/plugins/data/todomail*` (skills)
+    3. Fallback `${plugin_root}/.plugin-data/` (tests, dev hors Claude Code)
+    """
     env = os.environ.get("CLAUDE_PLUGIN_DATA")
     if env:
         return Path(env)
+    discovered = _discover_plugin_data()
+    if discovered is not None:
+        return discovered
     return Path(__file__).resolve().parent.parent / ".plugin-data"
 
 
@@ -42,20 +69,35 @@ def _state_path() -> Path:
     return _state_dir() / "state.json"
 
 
+def _discover_workspace() -> Path | None:
+    """Decouvre la racine du workspace utilisateur (CLAUDE_PROJECT_DIR).
+
+    Ordre :
+    1. `$CLAUDE_PROJECT_DIR` (defini par Claude Code aux hooks)
+    2. `os.getcwd()` SI le repertoire contient un marqueur workspace
+       todomail (`.todomail-config.json`). Sinon refus pour eviter
+       d'ecrire le mirror dans un repertoire arbitraire.
+    """
+    env = os.environ.get("CLAUDE_PROJECT_DIR")
+    if env:
+        project = Path(env)
+        if project.is_dir():
+            return project
+    cwd = Path.cwd()
+    if (cwd / ".todomail-config.json").is_file():
+        return cwd
+    return None
+
+
 def _workspace_mirror_path() -> Path | None:
     """Chemin du mirror `.todomail-state.json` a la racine du workspace.
 
-    Renvoie None si `CLAUDE_PROJECT_DIR` n'est pas defini ou pointe sur
-    un repertoire inexistant. Le mirror permet au dashboard (File System
-    Access) d'acceder a l'etat persistant hors `${CLAUDE_PLUGIN_DATA}`.
+    Renvoie None si le workspace n'est pas resolu. Le mirror permet au
+    dashboard (File System Access) d'acceder a l'etat persistant hors
+    `${CLAUDE_PLUGIN_DATA}`.
     """
-    env = os.environ.get("CLAUDE_PROJECT_DIR")
-    if not env:
-        return None
-    project = Path(env)
-    if not project.is_dir():
-        return None
-    return project / ".todomail-state.json"
+    workspace = _discover_workspace()
+    return workspace / ".todomail-state.json" if workspace else None
 
 
 def _touch_dashboard_invalidate() -> None:
@@ -67,13 +109,10 @@ def _touch_dashboard_invalidate() -> None:
     bougent les fichiers via Python (`lib.fs_utils.safe_mv`, etc.).
     Best-effort, silencieux en cas d'erreur.
     """
-    env = os.environ.get("CLAUDE_PROJECT_DIR")
-    if not env:
+    workspace = _discover_workspace()
+    if workspace is None:
         return
-    project = Path(env)
-    if not project.is_dir():
-        return
-    path = project / "dashboard_invalidate.txt"
+    path = workspace / "dashboard_invalidate.txt"
     try:
         path.touch(exist_ok=True)
         now = datetime.now(timezone.utc).timestamp()
