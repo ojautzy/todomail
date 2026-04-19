@@ -1,6 +1,6 @@
 ---
 description: Initialise le système todomail et sa mémoire de travail
-allowed-tools: Read, Write, Bash(mkdir:*), Bash(ls:*), Bash(cp:*), Glob, Grep, Task, AskUserQuestion, mcp
+allowed-tools: Read, Write, Bash(mkdir:*), Bash(ls:*), Bash(cp:*), Bash(python3:*), Glob, Grep, Task, AskUserQuestion, mcp
 ---
 
 # Commande Start
@@ -47,6 +47,52 @@ Lire le fichier `.todomail-config.json` à la racine du répertoire de travail a
 5. Confirmer à l'utilisateur : `Serveur MCP configuré pour ce workspace : <nom_choisi>`.
 
 **Note importante :** le fichier `.todomail-config.json` est local au workspace et ne doit pas être commité. Il est automatiquement géré par le plugin.
+
+#### 0c. Configuration IMAP (téléchargement des mails)
+
+Depuis la v2.1.0, le téléchargement des mails est pris en charge par le plugin lui-même (skill interne `fetch-imap`, plus de dépendance au tool MCP `check_inbox`). Les identifiants IMAP sont stockés dans le même fichier `.todomail-config.json`, bloc `imap`.
+
+**Cette section est idempotente :** si le bloc `imap` est déjà présent et complet (4 champs : `hostname`, `port`, `username`, `password`), ne rien demander et passer à l'Étape 1.
+
+1. Lire `.todomail-config.json` via `lib.config.load_config()` et inspecter le bloc `imap`.
+2. Si le bloc est absent ou qu'il manque un des 4 champs requis, demander à l'utilisateur via `AskUserQuestion` les valeurs suivantes (dans cet ordre) :
+   - **hostname** — serveur IMAP (valeur par défaut proposée : `127.0.0.1` pour proton-bridge local)
+   - **port** — port IMAP (valeur par défaut : `1143` pour proton-bridge ; `143` pour IMAP standard ; `993` pour IMAPS direct)
+   - **username** — adresse email du compte IMAP
+   - **password** — mot de passe IMAP (mot de passe d'application pour proton-bridge ; voir la documentation du client mail pour Gmail/Outlook/etc.)
+3. Écrire le bloc via `lib.config.save_imap_config(workspace, hostname, port, username, password)`. Cette fonction préserve `expected_rag_name`, bumpe le schéma en v2 si nécessaire, et applique `chmod 600` sur le fichier.
+4. Confirmer à l'utilisateur :
+
+```
+Configuration IMAP enregistrée dans .todomail-config.json (chmod 600).
+Test : /todomail:check-inbox
+```
+
+**Bloc Python canonique** pour cette étape :
+
+```bash
+python3 - <<'PY'
+import os, sys
+plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+sys.path.insert(0, plugin_root)
+from lib.state import workspace_dir
+from lib.config import load_config
+
+ws = workspace_dir()
+cfg = load_config(ws) or {}
+imap = cfg.get("imap") or {}
+required = {"hostname", "port", "username", "password"}
+missing = required - set(imap)
+if missing:
+    print(f"MISSING {sorted(missing)}")
+else:
+    print("OK")
+PY
+```
+
+Si la sortie est `OK`, passer à l'Étape 1. Sinon, prompter les champs manquants puis appeler `save_imap_config`.
+
+**Avertissement sensibilité :** le fichier `.todomail-config.json` contient un mot de passe en clair. Le plugin applique `chmod 600` (accessible uniquement au propriétaire), le fichier est gitignoré par défaut dans le workspace utilisateur. Si le répertoire de travail est synchronisé dans le cloud (Dropbox, iCloud, OneDrive), le secret peut y être copié : à éviter pour des comptes sensibles, ou utiliser un mot de passe d'application dédié.
 
 ### Étape 1. Vérifie l'existence des répertoires
 

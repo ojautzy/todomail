@@ -72,15 +72,98 @@ donc pas à la refaire.
 
 ## Étape 1 — Téléchargement des mails (sautée si `--retry`)
 
-Appeler le tool MCP `check_inbox` pour télécharger les mails depuis le serveur
-IMAP. Chaque mail est placé dans un sous-répertoire de `inbox/` dont le nom est
+Depuis la v2.1.0, le téléchargement IMAP est pris en charge par le skill
+interne `fetch-imap` (plugin-local, aucune dépendance au serveur MCP). La
+configuration IMAP est lue dans le bloc `imap` de `.todomail-config.json`.
+Chaque mail est placé dans un sous-répertoire de `inbox/` dont le nom est
 l'horodate du mail. Le sous-répertoire contient :
-- le mail au format EML
-- un `message.json` (métadonnées + corps)
-- chaque pièce jointe
+- le mail au format EML (`message.eml`)
+- un `message.json` (métadonnées + corps, produit par `eml_parser`)
+- chaque pièce jointe (nommage MIME-décodé)
 
-**Important** : le tool s'exécute en tâche de fond. Attendre la fin avant de
-passer à l'étape suivante.
+### 1a. Vérification de la configuration IMAP
+
+Lire le bloc `imap` de `.todomail-config.json`. S'il est absent ou incomplet :
+
+> **ARRÊT OBLIGATOIRE — Configuration IMAP manquante**
+> « Le bloc `imap` est absent de `.todomail-config.json`. Lancer
+> `/todomail:start` pour configurer les identifiants IMAP (hostname, port,
+> username, password), puis relancer `/todomail:check-inbox`. »
+
+### 1b. Exécution du téléchargement
+
+Bloc Python canonique (verrou + checkpoint + appel `fetch_inbox` + libération
+du verrou en `finally`) :
+
+```bash
+python3 - <<'PY'
+import os, sys
+plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not plugin_root:
+    raise RuntimeError("CLAUDE_PLUGIN_ROOT non defini")
+sys.path.insert(0, plugin_root)
+sys.path.insert(0, os.path.join(plugin_root, "skills", "fetch-imap", "scripts"))
+
+from lib.state import (
+    acquire_lock, release_lock, update_checkpoint, record_error, workspace_dir,
+)
+from lib.config import load_config
+from imap_fetch import fetch_inbox, ImapConfig
+
+ws = workspace_dir()
+cfg = load_config(ws)
+imap_block = (cfg or {}).get("imap") or {}
+required = {"hostname", "port", "username", "password"}
+missing = required - set(imap_block)
+if missing:
+    print(f"ERROR: bloc imap incomplet (manquants: {sorted(missing)}) — "
+          f"relance /todomail:start")
+    sys.exit(2)
+
+if not acquire_lock("check-inbox:fetch"):
+    print("ERROR: verrou deja pris, un autre cycle est en cours")
+    sys.exit(3)
+
+try:
+    update_checkpoint("check-inbox:fetch", "start")
+    imap_cfg = ImapConfig(
+        hostname=imap_block["hostname"],
+        port=int(imap_block["port"]),
+        username=imap_block["username"],
+        password=imap_block["password"],
+        use_starttls=bool(imap_block.get("use_starttls", True)),
+    )
+    report = fetch_inbox(ws / "inbox", imap_cfg)
+    if report.success:
+        update_checkpoint(
+            "check-inbox:fetch", "ok",
+            {"processed": report.processed, "errors": report.errors,
+             "delete_failed": report.delete_failed},
+        )
+    else:
+        update_checkpoint(
+            "check-inbox:fetch", "error",
+            {"error": report.error},
+        )
+        record_error(
+            mail_id="__fetch__", phase="check-inbox:fetch",
+            error_type="imap", message=report.error or "unknown",
+        )
+    print(report.as_json())
+finally:
+    release_lock()
+PY
+```
+
+Lire le JSON produit sur stdout (`FetchReport`) :
+
+- `success: true` avec `processed: 0` → aucun nouveau mail, continuer vers l'Étape 2 (pour nettoyer d'éventuels artefacts restants dans `inbox/`).
+- `success: true` avec `processed > 0` → continuer vers l'Étape 2.
+- `success: false` → afficher `error` à l'utilisateur et **arrêter** (ne pas lancer sort-mails). Typiquement : proton-bridge hors ligne, credentials invalides. L'erreur est déjà consignée dans `state.errors[]` pour inspection ultérieure.
+
+**Note :** aucun appel `update_index` n'est fait à cette étape. Le serveur MCP
+indexe uniquement `docs/` et `mails/` (les mails archivés post-traitement),
+pas `inbox/`. L'indexation RAG a lieu en fin de `/todomail:process-todo`.
 
 ## Étape 2 — Tri des mails (skill sort-mails)
 

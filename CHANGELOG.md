@@ -7,6 +7,35 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.1.0] - 2026-04-19
+
+Migration du téléchargement IMAP depuis le serveur MCP externe vers le plugin lui-même. Le connecteur MCP (`~~todomail-mcp`, `archiva-pro` en production) n'est plus sollicité pour le téléchargement des mails — sa responsabilité se limite désormais au RAG (base documentaire, archives mails) et aux calendriers iCalendar.
+
+### Ajouté
+
+- **Skill interne `fetch-imap`** — Téléchargement IMAP4 (STARTTLS) des nouveaux mails depuis un serveur IMAP (proton-bridge par défaut, `127.0.0.1:1143`), écriture de chaque message dans `inbox/<YYYY-MM-DD_HHhMMmSS>/` (`message.eml` + `message.json` + pièces jointes), suppression côté serveur via UID MOVE Trash (RFC 6851) ou fallback COPY + STORE `\Deleted` + EXPUNGE. Deux modules Python (`imap_fetch.py`, `eml_parser.py`), stdlib uniquement. Non auto-déclenchable : invoqué uniquement par `/todomail:check-inbox`.
+- **Schéma v2 pour `.todomail-config.json`** — Le fichier workspace intègre désormais un bloc `imap` (hostname, port, username, password, use_starttls). `lib/config.py` expose `save_imap_config()` qui préserve `expected_rag_name`, bumpe le schéma et applique `chmod 600` sur le fichier. Migration v1 → v2 transparente en lecture ; la version est bumpée à la première écriture enrichie.
+- **Helper `lib/fs_utils.chmod_600()`** — Utilitaire best-effort pour restreindre les permissions POSIX d'un fichier à `0o600` (silencieux si l'OS ne supporte pas).
+- **Section 0c de `/todomail:start`** — Configuration IMAP interactive via `AskUserQuestion` : si le bloc `imap` est absent ou incomplet dans `.todomail-config.json`, les 4 valeurs sont demandées (hostname par défaut `127.0.0.1`, port par défaut `1143`, username, password). Idempotente : ne demande rien si la config est déjà complète.
+
+### Modifié
+
+- **`/todomail:check-inbox` Étape 1** — L'appel au tool MCP `check_inbox` est remplacé par un bloc Python local qui appelle `fetch_inbox(inbox_dir, ImapConfig)` du skill `fetch-imap`. Le bloc lit la config IMAP via `lib.config.load_config()`, pose le verrou `check-inbox:fetch`, appelle `fetch_inbox`, met à jour le checkpoint, et libère le verrou en `finally`. Fail-fast clair si le bloc `imap` est absent (pointe vers `/todomail:start`).
+- **`CONNECTORS.md`** — Retrait du tool `check_inbox` de la liste des tools fournis par le connecteur ; retrait de la ligne `update_index` du tableau d'usage (aucune commande/skill du plugin ne l'appelle — l'utilisateur le déclenche directement depuis Claude Desktop, tool `task=True` non compatible avec un appel en flux) ; mise à jour de la section « Configuration » pour expliquer que la configuration IMAP est désormais gérée par le plugin via `.todomail-config.json`. Clarification de la sémantique du RAG : indexation uniquement sur `docs/` et `mails/`, jamais sur `inbox/`.
+- **`README.md`** — Nouvelle section « Configuration IMAP » (valeurs par défaut, avertissement sensibilité, gitignore, chmod 600) ; mise à jour de la présentation, de la table des skills, de l'arborescence plugin (ajout de `skills/fetch-imap/`), de la description du workspace `inbox/` (peuplé par `fetch-imap`) et de la section « Connecteurs » (rôle du MCP restreint au RAG et aux calendriers).
+
+### Supprimé
+
+- **Dépendance au tool MCP `check_inbox`** — Le plugin n'appelle plus ce tool. Le tool reste exposé côté serveur `archiva-pro` (cleanup ultérieur, archiva vNext).
+
+### Migration
+
+- Depuis une v2.0.x : relancer `/todomail:start` une fois après mise à jour du plugin. La section 0c détectera l'absence du bloc `imap` dans `.todomail-config.json` et prompte les 4 valeurs IMAP (hostname, port, username, password). Le fichier sera réécrit en schéma v2 avec `chmod 600`.
+- Les 4 valeurs IMAP correspondent exactement à celles qui étaient configurées dans `archiva-dev/.env` (`IMAP_HOSTNAME`, `IMAP_PORT`, `IMAP_USERNAME`, `IMAP_PASSWORD`). Elles peuvent être recopiées telles quelles.
+- Aucune modification du schéma des fichiers dans `inbox/<ts>/` (message.eml + message.json + pièces jointes identiques) : `sort-mails` et `/process-todo` ne sont pas impactés.
+
+---
+
 ## [2.0.0] - 2026-04-19
 
 Release consolidée du refactoring v2.0 vers Claude Code (Opus 4.6 1M). Cette release consolide les 8 pré-releases `2.0.0-alpha.1` à `2.0.0-alpha.8` en une seule note complète. Les entrées alpha détaillées sont conservées ci-dessous pour la traçabilité.
