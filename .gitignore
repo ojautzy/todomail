@@ -21,13 +21,11 @@ docs/
 memory/
 consult.md
 .todomail-config.json
-.todomail-state.json
-dashboard_invalidate.txt
-retry_request.txt
-errors_dismiss.txt
 
-# Plugin runtime data (state.json fallback when CLAUDE_PLUGIN_DATA is not set)
-.plugin-data/
+# Runtime du plugin pour le workspace (alpha.8+) : state.json,
+# memory_cache.json, invalidate.txt, hooks.log, retry_request.txt,
+# errors_dismiss.txt — tout est dans ce dossier unique.
+.todomail/
 
 # Refactoring plan and per-phase prompts (working documents, not part of the plugin)
 REFACTOR_PLAN.md

@@ -348,15 +348,17 @@ Chaque section affiche un compteur dans la sidebar.
 
 Le dashboard détecte automatiquement les modifications produites par Claude (via les commandes `/todomail:check-inbox`, `/todomail:process-todo`, etc.) grâce à un mécanisme de polling local, sans WebSocket ni modification du serveur MCP.
 
-### Fichiers de surveillance (racine du workspace)
+### Fichiers de surveillance (`$CLAUDE_PROJECT_DIR/.todomail/`)
+
+Depuis alpha.8, tout le runtime du plugin pour ce workspace vit dans le dossier `.todomail/` à la racine du workspace.
 
 | Fichier | Écrit par | Rôle |
 |---------|-----------|------|
-| `dashboard_invalidate.txt` | Hook `PostToolUse` (`hooks/invalidate_dashboard_cache.py`) après chaque `mv`/`rm` sur `todo/`, `inbox/` ou `mails/` | Signal d'invalidation générique — son `lastModified` change à chaque modif. |
-| `.todomail-state.json` | `lib/state.py.save_state()` (mirror du state canonique `${CLAUDE_PLUGIN_DATA}/state.json`) | Expose au dashboard le `session_id`, `active_lock` et `errors[]` courants. |
+| `.todomail/invalidate.txt` | `lib/state.py.save_state()` à chaque écriture d'état + hook `PostToolUse` (`hooks/invalidate_dashboard_cache.py`) après `mv`/`rm` Bash sur `todo/`, `inbox/` ou `mails/` | Signal d'invalidation — son `lastModified` change à chaque modif. |
+| `.todomail/state.json` | `lib/state.py.save_state()` (source de vérité unique, plus de mirror) | Expose au dashboard le `session_id`, `active_lock`, `errors[]` et les checkpoints. |
 
 Le dashboard lit ces deux fichiers toutes les 3 secondes et déclenche un rafraîchissement si :
-- `dashboard_invalidate.txt` a changé (Claude a bougé des fichiers),
+- `.todomail/invalidate.txt` a changé (Claude a bougé des fichiers ou écrit dans `state.json`),
 - Le `session_id` du workspace a changé (nouveau cycle),
 - Le verrou vient d'être libéré (fin de cycle),
 - La liste des erreurs a changé.
@@ -373,8 +375,8 @@ Si `.todomail-state.json.active_lock` n'est pas `null` (un `sort-mails` ou `proc
 
 Si `state.errors[]` contient des entrées, un panneau rouge déployable liste les mails en échec avec leur phase, type d'erreur, compteur de tentatives et message. Deux actions :
 
-* **Retry tous** : écrit `retry_request.txt` (liste des `mail_id` à relancer) à la racine du workspace. Consommé par `hooks/session_start.py` au prochain démarrage de commande (marque `retry_requested: true` sur les entrées correspondantes pour que `/process-todo --retry` les traite en priorité).
-* **Ignorer** (par erreur) : écrit `errors_dismiss.txt` (un `mail_id` par ligne). Consommé par `hooks/session_start.py` qui retire les entrées correspondantes de `state.errors[]`.
+* **Retry tous** : écrit `.todomail/retry_request.txt` (liste des `mail_id` à relancer). Consommé par `hooks/session_start.py` au prochain démarrage de commande (marque `retry_requested: true` sur les entrées correspondantes pour que `/process-todo --retry` les traite en priorité).
+* **Ignorer** (par erreur) : écrit `.todomail/errors_dismiss.txt` (un `mail_id` par ligne). Consommé par `hooks/session_start.py` qui retire les entrées correspondantes de `state.errors[]`.
 
 Ces fichiers-marqueurs sont supprimés après consommation. L'architecture évite toute écriture concurrente du `state.json` entre le navigateur et les processus Python.
 

@@ -47,6 +47,50 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
   - `_workspace_mirror_path()` et `_touch_dashboard_invalidate()` exploitent ce fallback. Désormais, même si le sous-process Python d'un skill n'a aucune variable d'env Claude Code, le state canonique et le mirror dashboard sont écrits au bon endroit.
 - `hooks/session_start.py` : `.hooks_fired.log` capture désormais `CLAUDE_PROJECT_DIR`, `CLAUDE_PLUGIN_DATA` et `CLAUDE_PLUGIN_ROOT` pour faciliter le diagnostic des prochaines anomalies d'environnement.
 
+### Refactor architectural — runtime du plugin dans le workspace
+
+Tout l'état runtime du plugin pour ce workspace vit désormais dans un dossier dédié **`$CLAUDE_PROJECT_DIR/.todomail/`** au lieu d'être éclaté entre `$CLAUDE_PLUGIN_DATA` et la racine du workspace.
+
+**Motivation** : toutes les données runtime du plugin (state, memory_cache, hooks log, signal d'invalidation, marqueurs retry/dismiss) sont **spécifiques au workspace**, jamais globales au plugin. Utiliser `CLAUDE_PLUGIN_DATA` (conçu pour des données globales survivant aux updates) était un mauvais fit qui causait :
+- Un mirror `.todomail-state.json` à entretenir (double écriture, risque désynchronisation)
+- Une découverte automatique fragile en cas d'absence de variable d'env (cf. correctif précédent)
+- Des installations fantômes (`todomail-inline`, `todomail-local-desktop-app-uploads`) qui coexistent
+- Une difficulté de debug (chercher dans `~/.claude/plugins/data/todomail-*` au lieu du workspace)
+
+**Nouveau schéma** :
+
+```
+$CLAUDE_PROJECT_DIR/
+├── .todomail/                      ← TOUT le runtime
+│   ├── state.json                  ← (anciennement $PLUGIN_DATA/state.json)
+│   ├── memory_cache.json           ← (anciennement $PLUGIN_DATA/memory_cache.json)
+│   ├── hooks.log                   ← (anciennement $PLUGIN_DATA/.hooks_fired.log)
+│   ├── invalidate.txt              ← (anciennement dashboard_invalidate.txt à la racine)
+│   ├── retry_request.txt           ← (anciennement à la racine)
+│   ├── errors_dismiss.txt          ← (anciennement à la racine)
+│   └── precompact_snapshot_*.json  ← (anciennement $PLUGIN_DATA/)
+├── .todomail-config.json           ← inchangé
+├── inbox/, todo/, mails/, ...      ← inchangé
+└── dashboard.html                  ← lit directement .todomail/state.json
+```
+
+**Bénéfices** :
+- **Source de vérité unique** : plus de mirror, plus de désynchronisation possible
+- **Isolation naturelle multi-workspace** : chaque projet a son propre runtime, pas de mélange
+- **Debug facile** : tout est visible dans le workspace, pas besoin d'aller fouiller `~/.claude/plugins/data/`
+- **Plus de problème de propagation des variables d'env** : seul `CLAUDE_PROJECT_DIR` ou `cwd` est nécessaire
+- **Nettoyage trivial** : supprimer le dossier `.todomail/` réinitialise complètement l'état runtime pour ce workspace
+
+**Modifications** :
+- `lib/state.py` : `runtime_dir()` exposé, `workspace_dir()` strict (lève si workspace introuvable), suppression de `_workspace_mirror_path` et `_discover_plugin_data`.
+- `hooks/session_start.py`, `hooks/invalidate_dashboard_cache.py`, `hooks/pre_compact.py` : tous écrivent dans `.todomail/`.
+- `skills/dashboard.html` : lecture via `getDirectoryHandle('.todomail')` puis `state.json` / `invalidate.txt` ; les marqueurs retry/dismiss y sont aussi écrits.
+- `commands/start.md` : `.todomail/` ajouté à la liste des répertoires à créer.
+- `.gitignore` : `.todomail/` remplace les entrées éparses (`.todomail-state.json`, `dashboard_invalidate.txt`, `retry_request.txt`, `errors_dismiss.txt`, `.plugin-data/`).
+- Tests `hooks/tests/test_hooks.sh` adaptés aux nouveaux chemins.
+
+**Migration** : aucun script automatique. Pour les utilisateurs alpha.7 ou antérieurs qui passent à alpha.8, le `state.json` actuel ne contenait que des checkpoints historiques sans valeur actionnable (errors vides, lock null). Au premier `/todomail:start` après l'install, `lib/state.py` créera un nouveau `state.json` vierge dans `$CLAUDE_PROJECT_DIR/.todomail/`. Les anciens fichiers à la racine du workspace (`.todomail-state.json`, `dashboard_invalidate.txt`) deviennent du bruit inoffensif et peuvent être supprimés manuellement.
+
 ---
 
 ## [2.0.0-alpha.7] - 2026-04-18

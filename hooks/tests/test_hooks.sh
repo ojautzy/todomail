@@ -67,18 +67,18 @@ check "stdin vide : exit 0" bash -c 'echo -n "" | python3 hooks/enforce_classify
 echo "=== invalidate_dashboard_cache ==="
 
 # Commande qui ne concerne pas todo/inbox/mails -> pas de fichier touché
-rm -f "$CLAUDE_PROJECT_DIR/dashboard_invalidate.txt"
+rm -rf "$CLAUDE_PROJECT_DIR/.todomail"
 echo '{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"mv src/a.py src/b.py"}}' | python3 hooks/invalidate_dashboard_cache.py
-check "no-op: mv hors watched" bash -c '[ ! -f "$CLAUDE_PROJECT_DIR/dashboard_invalidate.txt" ]'
+check "no-op: mv hors watched" bash -c '[ ! -f "$CLAUDE_PROJECT_DIR/.todomail/invalidate.txt" ]'
 
 # Commande qui touche todo/
 echo '{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"mv todo/a.json todo/done/a.json"}}' | python3 hooks/invalidate_dashboard_cache.py
-check "touch: mv sur todo/" bash -c '[ -f "$CLAUDE_PROJECT_DIR/dashboard_invalidate.txt" ]'
+check "touch: mv sur todo/" bash -c '[ -f "$CLAUDE_PROJECT_DIR/.todomail/invalidate.txt" ]'
 
 # rm sur inbox/
-rm -f "$CLAUDE_PROJECT_DIR/dashboard_invalidate.txt"
+rm -rf "$CLAUDE_PROJECT_DIR/.todomail"
 echo '{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"rm inbox/old.eml"}}' | python3 hooks/invalidate_dashboard_cache.py
-check "touch: rm sur inbox/" bash -c '[ -f "$CLAUDE_PROJECT_DIR/dashboard_invalidate.txt" ]'
+check "touch: rm sur inbox/" bash -c '[ -f "$CLAUDE_PROJECT_DIR/.todomail/invalidate.txt" ]'
 
 check "stdin vide : exit 0" bash -c 'echo -n "" | python3 hooks/invalidate_dashboard_cache.py'
 
@@ -95,14 +95,14 @@ echo "=== session_start ==="
 out=$(echo '{"hook_event_name":"SessionStart","source":"startup"}' | python3 hooks/session_start.py)
 check "exit 0 sans crash" bash -c 'true'
 # Le cache mémoire doit avoir été créé (même s'il est vide)
-check "memory_cache.json cree" bash -c '[ -f "$CLAUDE_PLUGIN_DATA/memory_cache.json" ]'
+check "memory_cache.json cree" bash -c '[ -f "$CLAUDE_PROJECT_DIR/.todomail/memory_cache.json" ]'
 
 check "stdin vide : exit 0" bash -c 'echo -n "" | python3 hooks/session_start.py'
 
 echo "=== pre_compact ==="
 
 echo '{"hook_event_name":"PreCompact","trigger":"manual"}' | python3 hooks/pre_compact.py
-check "snapshot cree" bash -c 'ls "$CLAUDE_PLUGIN_DATA"/precompact_snapshot_*.json >/dev/null 2>&1'
+check "snapshot cree" bash -c 'ls "$CLAUDE_PROJECT_DIR"/.todomail/precompact_snapshot_*.json >/dev/null 2>&1'
 
 check "stdin vide : exit 0" bash -c 'echo -n "" | python3 hooks/pre_compact.py'
 

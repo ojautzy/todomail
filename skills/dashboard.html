@@ -229,8 +229,8 @@
             // ========== PHASE 5 — watch + versioning + erreurs + memoire ==========
             const [pendingMeta, setPendingMeta] = useState(null);          // _meta du pending_emails.json courant
             const [instructionsMeta, setInstructionsMeta] = useState(null); // _meta du instructions.json courant
-            const [workspaceState, setWorkspaceState] = useState(null);    // contenu du .todomail-state.json
-            const [invalidateStamp, setInvalidateStamp] = useState(null);  // lastModified de dashboard_invalidate.txt
+            const [workspaceState, setWorkspaceState] = useState(null);    // contenu de .todomail/state.json
+            const [invalidateStamp, setInvalidateStamp] = useState(null);  // lastModified de .todomail/invalidate.txt
             const [errorsPanelOpen, setErrorsPanelOpen] = useState(false);
             const [dismissedIds, setDismissedIds] = useState(new Set());    // IDs retires cote UI apres bouton Ignorer
 
@@ -436,11 +436,21 @@
                 if (rootHandle) loadSubdirEmails(rootHandle, subdirKey);
             };
 
-            // ========== PHASE 5 — Polling 3s sur .todomail-state.json + dashboard_invalidate.txt ==========
+            // ========== PHASE 5 — Polling 3s sur .todomail/state.json + .todomail/invalidate.txt ==========
+
+            const getRuntimeDir = async (handle) => {
+                try {
+                    return await handle.getDirectoryHandle('.todomail');
+                } catch (_) {
+                    return null;
+                }
+            };
 
             const readWorkspaceState = async (handle) => {
                 try {
-                    const fh = await handle.getFileHandle('.todomail-state.json');
+                    const rt = await getRuntimeDir(handle);
+                    if (!rt) return null;
+                    const fh = await rt.getFileHandle('state.json');
                     const file = await fh.getFile();
                     const content = await file.text();
                     return JSON.parse(content);
@@ -451,7 +461,9 @@
 
             const readInvalidateStamp = async (handle) => {
                 try {
-                    const fh = await handle.getFileHandle('dashboard_invalidate.txt');
+                    const rt = await getRuntimeDir(handle);
+                    if (!rt) return null;
+                    const fh = await rt.getFileHandle('invalidate.txt');
                     const file = await fh.getFile();
                     return file.lastModified;
                 } catch (_) {
@@ -518,14 +530,15 @@
             const writeMarkerFile = async (filename, lines) => {
                 if (!rootHandle) return false;
                 try {
-                    const fh = await rootHandle.getFileHandle(filename, { create: true });
+                    const rt = await rootHandle.getDirectoryHandle('.todomail', { create: true });
+                    const fh = await rt.getFileHandle(filename, { create: true });
                     const writable = await fh.createWritable();
                     const content = lines.length ? lines.join('\n') + '\n' : '';
                     await writable.write(content);
                     await writable.close();
                     return true;
                 } catch (err) {
-                    console.error(`Erreur ecriture ${filename}:`, err);
+                    console.error(`Erreur ecriture .todomail/${filename}:`, err);
                     return false;
                 }
             };
