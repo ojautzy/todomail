@@ -15,11 +15,13 @@ FAIL=0
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
-# Isolation : on force CLAUDE_PLUGIN_DATA et CLAUDE_PROJECT_DIR dans un
-# temp pour ne pas polluer l'environnement utilisateur.
-export CLAUDE_PLUGIN_DATA="$TMPDIR/plugin-data"
+# Isolation : on force CLAUDE_PROJECT_DIR dans un temp pour ne pas
+# polluer l'environnement utilisateur. Depuis alpha.8, tout l'etat
+# runtime (state.json, memory_cache.json, snapshots, etc.) vit sous
+# $CLAUDE_PROJECT_DIR/.todomail/ — plus de variable CLAUDE_PLUGIN_DATA
+# necessaire.
 export CLAUDE_PROJECT_DIR="$TMPDIR/project"
-mkdir -p "$CLAUDE_PLUGIN_DATA" "$CLAUDE_PROJECT_DIR"
+mkdir -p "$CLAUDE_PROJECT_DIR"
 
 check() {
   local label="$1"; shift

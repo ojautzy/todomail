@@ -369,7 +369,7 @@ PY
 2. Écraser `todo/_deferred.json` avec `[]` si existant.
 3. Executer le bloc de finalisation Python ci-dessus.
 4. `rag_cache.clear()` + afficher `rag_cache.stats()` (hits/miss).
-5. `dashboard_invalidate.txt` est touche automatiquement par `save_state()`
+5. `.todomail/invalidate.txt` est touche automatiquement par `save_state()`
    (alpha.8) — pas de touch manuel necessaire.
 
 ### Compte-rendu
@@ -443,5 +443,5 @@ Contrat produit pour chaque mail (artefact de reprise, réécrit à chaque phase
   parallélisme).
 - **`_deferred.json`** : file d'attente entre Étape 2 et Étape 3 pour les
   reclassés, évite un aller-retour dashboard. Écrasé `[]` en Étape 6.
-- **Dashboard non modifié** : `dashboard_invalidate.txt` touché en fin (refonte
-  = Phase 5).
+- **Dashboard notifié automatiquement** : chaque `save_state()` touche
+  `.todomail/invalidate.txt`, déclenchant le refresh du polling 3s.

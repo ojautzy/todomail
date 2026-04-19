@@ -369,7 +369,7 @@ Si le `_meta.session_id` du `pending_emails.json` courant ne correspond plus à 
 
 ### Verrou pendant écriture Claude
 
-Si `.todomail-state.json.active_lock` n'est pas `null` (un `sort-mails` ou `process-todo` est en cours), un banner bleu « Claude travaille… » s'affiche, les dropdowns de décision et les boutons bulk sont grisés. La libération du verrou au tick suivant déclenche un rafraîchissement automatique.
+Si `.todomail/state.json.active_lock` n'est pas `null` (un `sort-mails` ou `process-todo` est en cours), un banner bleu « Claude travaille… » s'affiche, les dropdowns de décision et les boutons bulk sont grisés. La libération du verrou au tick suivant déclenche un rafraîchissement automatique.
 
 ### Panneau d'erreurs et reprise
 
