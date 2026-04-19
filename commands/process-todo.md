@@ -372,6 +372,15 @@ PY
 5. `.todomail/invalidate.txt` est touche automatiquement par `save_state()`
    (alpha.8) — pas de touch manuel necessaire.
 
+**Indexation RAG — à déclencher séparément par l'utilisateur.** Le tool MCP
+`update_index` est déclaré `task=True` côté serveur (indexation LanceDB qui
+peut durer plusieurs minutes) et provoque un timeout côté client Claude
+Desktop s'il est appelé en flux dans `/process-todo`. Aucun wrapper plugin :
+l'utilisateur appelle directement le tool MCP `update_index` depuis Claude
+Desktop quand il souhaite rafraîchir le RAG (typiquement après ce cycle).
+Le compte-rendu ci-dessous le rappelle si au moins un mail a été archivé
+dans `mails/` ou une PJ classée dans `docs/`.
+
 ### Compte-rendu
 
 | Action | Nombre |
@@ -382,6 +391,18 @@ PY
 | Reclassés et traités (`_deferred`) | ... |
 
 Fichiers créés dans `to-send/` et `to-work/` : lister. Orphelins retirés : N.
+
+**Rappel indexation RAG** : si au moins un mail a été archivé dans
+`mails/<AAAA>/<MM>/` ou une PJ classée dans `docs/AURA|MIN/` au cours du cycle,
+afficher en fin de compte-rendu :
+
+> N nouveau(x) mail(s) archivé(s) et N pièce(s) jointe(s) classée(s). Pour
+> que le RAG les intègre, appelle directement le tool MCP `update_index`
+> depuis Claude Desktop (peut durer plusieurs minutes — ne pas le lancer
+> depuis une commande plugin pour éviter les timeouts côté client).
+
+Pas d'appel automatique ici : le tool MCP est `task=True` et un appel en flux
+depuis `/process-todo` timeout côté client.
 
 **Erreurs** : si `state.errors[]` non vide, lister (`mail_id`, `phase`,
 `error_type`, `retry_count`, `permanent_failure`) et suggérer :

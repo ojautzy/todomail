@@ -4,7 +4,7 @@ Plugin de traitement intelligent des emails reçus et de gestion d'agenda pour C
 
 ## Présentation
 
-TodoMail transforme Claude en assistant professionnel pour la gestion du courrier entrant et de l'agenda. Il télécharge les mails via un connecteur MCP `~~todomail-mcp` IMAP, les trie automatiquement par catégorie d'action, et offre une interface interactive (dashboard) pour gérer l'ensemble des catégories de mails triés. Il intègre également des fonctionnalités de gestion d'agenda : consultation du programme, vérification des disponibilités, détection de conflits, préparation de réunions et audit de cohérence.
+TodoMail transforme Claude en assistant professionnel pour la gestion du courrier entrant et de l'agenda. Il télécharge les mails depuis un serveur IMAP4 (skill interne `fetch-imap`, proton-bridge par défaut), les trie automatiquement par catégorie d'action, et offre une interface interactive (dashboard) pour gérer l'ensemble des catégories de mails triés. Il intègre également des fonctionnalités de gestion d'agenda : consultation du programme, vérification des disponibilités, détection de conflits, préparation de réunions et audit de cohérence. Le connecteur MCP `~~todomail-mcp` reste utilisé uniquement pour la recherche RAG (base documentaire, archives mails) et la lecture des calendriers iCalendar.
 
 Le plugin intègre un système de mémoire à deux niveaux (mémoire courante + mémoire spécifique) qui permet à Claude de comprendre le contexte professionnel de l'utilisateur : collaborateurs, acronymes, dossiers en cours, préférences de rédaction, réunions récurrentes, lieux fréquents et préférences agenda.
 
@@ -33,6 +33,7 @@ Principe : si Claude doit pouvoir utiliser une capacité de sa propre initiative
 | Skill | Description |
 |-------|-------------|
 | `sort-mails` | Logique de tri des mails par catégorie, avec détection et enrichissement des mails liés à l'agenda |
+| `fetch-imap` | Téléchargement IMAP4 (STARTTLS) des nouveaux mails vers `inbox/`. Skill interne, invoqué par `/check-inbox` uniquement. |
 | `memory-management` | Système de mémoire à deux niveaux incluant la connaissance calendrier (réunions récurrentes, lieux, préférences agenda) |
 | `read-odf` | Extraction de texte depuis les fichiers OpenDocument (.odt, .ods, .odp) via un script Python |
 | `agenda` | Connaissance du programme de l'utilisateur sur une période (brique fondamentale calendrier) |
@@ -113,6 +114,11 @@ todomail/
 │   └── mail-prefilter.md
 ├── skills/
 │   ├── sort-mails/SKILL.md
+│   ├── fetch-imap/                 ← nouveau en v2.1.0 (téléchargement IMAP4)
+│   │   ├── SKILL.md
+│   │   └── scripts/
+│   │       ├── imap_fetch.py
+│   │       └── eml_parser.py
 │   ├── read-odf/
 │   │   ├── SKILL.md
 │   │   ├── requirements.txt
@@ -149,7 +155,7 @@ Après initialisation (`/start`), le répertoire de travail de l'utilisateur con
 
 ```
 répertoire de travail/
-├── inbox/                      ← mails téléchargés en attente de tri (peuplée par le connecteur MCP/RAG)
+├── inbox/                      ← mails téléchargés en attente de tri (peuplée par le skill `fetch-imap` depuis v2.1.0)
 ├── todo/
 │   ├── trash/                  ← mails à supprimer
 │   ├── do-read-quick/          ← lecture rapide
@@ -166,7 +172,7 @@ répertoire de travail/
 ├── docs/                       ← base documentaire (indexée par le connecteur MCP/RAG)
 ├── consult.md                  ← registre des consultations en cours
 ├── dashboard.html              ← interface interactive de gestion des mails
-├── .todomail-config.json       ← config MCP locale (expected_rag_name, géré par /start)
+├── .todomail-config.json       ← config workspace (schéma v2 : expected_rag_name + bloc imap, chmod 600, géré par /start)
 ├── .todomail/                  ← runtime du plugin (alpha.8+) : state.json, memory_cache.json,
 │                                  invalidate.txt, hooks.log, retry_request.txt, errors_dismiss.txt,
 │                                  precompact_snapshot_*.json — géré automatiquement, gitignoré
@@ -181,7 +187,24 @@ répertoire de travail/
 
 Le plugin travaille directement dans le répertoire de travail de l'utilisateur. Aucune configuration de chemin n'est nécessaire : tout est créé automatiquement par la commande `/start`, y compris le fichier `dashboard.html` placé à la racine du répertoire de travail.
 
-La configuration IMAP (serveur, identifiants), les paramètres d'indexation et la configuration des calendriers iCalendar sont gérés par le connecteur MCP `~~todomail-mcp` via son fichier `.env`.
+### Configuration IMAP (depuis v2.1.0)
+
+Le téléchargement des mails est désormais pris en charge par le plugin lui-même via le skill interne `fetch-imap` (plus de dépendance au MCP pour IMAP). La configuration IMAP (hostname, port, username, password) est stockée dans le fichier `.todomail-config.json` du workspace (bloc `imap`), écrit avec `chmod 600` et gitignoré.
+
+**Première configuration** : à la première exécution de `/start`, la section 0c demande interactivement les 4 valeurs :
+
+- **hostname** — par défaut `127.0.0.1` (proton-bridge local)
+- **port** — par défaut `1143` (proton-bridge STARTTLS), `143` (IMAP standard) ou `993` (IMAPS direct)
+- **username** — adresse email du compte IMAP
+- **password** — mot de passe IMAP (pour Gmail/Outlook/Proton : un mot de passe d'application dédié)
+
+La section 0c est **idempotente** : si les 4 champs sont déjà présents, rien n'est demandé. Pour reconfigurer : supprimer le bloc `imap` du fichier et relancer `/start`.
+
+**Avertissement sensibilité** : le mot de passe est stocké en clair dans `.todomail-config.json`. Le plugin applique `chmod 600` et le fichier doit rester gitignoré. Si le répertoire de travail est synchronisé dans le cloud (Dropbox, iCloud, OneDrive), le secret peut y être copié : à éviter, ou utiliser un mot de passe d'application révocable.
+
+### Configuration RAG et calendriers (MCP)
+
+Les paramètres d'indexation RAG (`DOCUMENTS_PATH`, `MAILS_PATH`, modèle d'embeddings) et les flux iCalendar restent gérés par le connecteur MCP `~~todomail-mcp` via son fichier `.env`.
 
 ### Désambiguation multi-serveurs MCP
 
@@ -193,11 +216,11 @@ Ce plugin s'appuie sur le connecteur suivant :
 
 | Connecteur | Rôle | Obligatoire |
 |------------|------|-------------|
-| `~~todomail-mcp` | Gestion IMAP, recherche RAG (base documentaire, organigramme, contextualisation) et calendriers iCalendar | Oui |
+| `~~todomail-mcp` | Recherche RAG (base documentaire, archives mails, organigramme) et calendriers iCalendar | Oui |
 
 ### Connecteur MCP (`~~todomail-mcp`)
 
-Fournit la gestion IMAP (téléchargement, indexation des mails), l'indexation et la recherche RAG, et la consultation des calendriers iCalendar. Voir `CONNECTORS.md` pour les détails.
+Fournit l'indexation et la recherche RAG (mails archivés, documents, organigramme) ainsi que la consultation des calendriers iCalendar. Le téléchargement IMAP, assuré jusqu'en v2.0.x par ce connecteur, est désormais pris en charge par le plugin lui-même (skill `fetch-imap`). Voir `CONNECTORS.md` pour les détails.
 
 ## Cycle de vie des pending_emails.json
 

@@ -82,6 +82,19 @@ def atomic_read_json(path: Path) -> Any | None:
         return None
 
 
+def chmod_600(path: Path) -> bool:
+    """Set file permissions to 0o600 (owner read/write only).
+
+    Best-effort : returns False silently if the filesystem does not support
+    POSIX permissions (Windows, some network mounts). Idempotent.
+    """
+    try:
+        os.chmod(path, 0o600)
+        return True
+    except (OSError, NotImplementedError):
+        return False
+
+
 def is_already_in_destination(mail_id: str, dest_dir: Path) -> bool:
     """Check if a mail subdirectory already exists in destination."""
     return (Path(dest_dir) / mail_id).exists()

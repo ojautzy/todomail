@@ -17,13 +17,11 @@ workflows in terms of categories rather than specific products.
 
 Le plugin s'appuie sur un connecteur MCP  (`~~todomail-mcp`) qui fournit les tools suivants :
 
-### Gestion de la boîte de réception
+**Note v2.1.0 :** le téléchargement des mails IMAP n'est plus de la responsabilité du connecteur MCP. Il est pris en charge par le skill interne `fetch-imap` du plugin, qui lit la configuration IMAP depuis `.todomail-config.json` (bloc `imap`). Le connecteur ne gère désormais que le RAG et les calendriers.
 
-- `check_inbox` — Télécharge les nouveaux mails depuis un serveur IMAP, enregistre les pièces jointes, et supprime les messages du serveur
+### Indexation et recherche documentaire (RAG)
 
-### Recherche documentaire (RAG)
-
-- `update_index` — Met à jour l'index RAG avec les fichiers modifiés (documents et/ou mails)
+- `update_index` — Met à jour l'index RAG avec les fichiers modifiés (documents et/ou mails). Appelé **directement par l'utilisateur** depuis Claude Desktop (pas de commande plugin dédiée) quand il souhaite rafraîchir l'index, typiquement après `/process-todo`. Tool MCP `task=True` (peut durer plusieurs minutes) — ne pas l'appeler en flux depuis une commande plugin pour éviter les timeouts côté client.
 - `status` — Retourne l'état actuel de l'index (compteurs, configuration, dernière indexation)
 - `search_mail` — Recherche hybride (vectorielle + BM25) dans les archives emails indexés
 - `search_doc` — Recherche hybride dans la base documentaire (Word, Excel, PDF, etc.)
@@ -46,8 +44,6 @@ Les tools sont utilisés directement ou indirectement (via des skills ou des age
 
 | Tool | sort-mails | process-todo | agenda | disponibilites | detection-conflits | /check-inbox | /briefing | /check-agenda | briefing (skill) | check-agenda (skill) | /start |
 |------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| `check_inbox` | | | | | | ✓ | | | | | |
-| `update_index` | | | | | | ✓ | | | | | |
 | `search_mail` | ✓ | ✓ | ✓ | | | (i) | ✓ | | (i) | | ✓ |
 | `search_doc` | ✓ | ✓ | ✓ | | | (i) | ✓ | | (i) | | ✓ |
 | `search_all` | ✓ | ✓ | ✓ | | | (i) | ✓ | | (i) | | ✓ |
@@ -57,9 +53,13 @@ Les tools sont utilisés directement ou indirectement (via des skills ou des age
 | `sync_calendars` | | | ✓ | | | | | | | | ✓ |
 | `status` | | | | | | ✓ | ✓ | ✓ | | | ✓ |
 
+> `update_index` n'apparaît pas dans ce tableau : aucune commande ni skill du plugin ne l'appelle. L'utilisateur le déclenche directement depuis Claude Desktop quand il souhaite rafraîchir le RAG (typiquement après `/process-todo`).
+
 **Légende :** ✓ = appel direct du tool MCP | (i) = appel indirect via un skill intermédiaire (`/check-inbox` délègue à `sort-mails` ; `/briefing` et `/check-agenda` appellent les skills `agenda`, `disponibilites`, `detection-conflits` ; les wrappers skills `briefing` et `check-agenda` délèguent aux commandes homonymes).
 
 **Refonte v2.0.0 (Phases 2/3/6) :** Les agents `mail-analyzer` (Phase 2) et `todo-processor` (Phase 3) ont été supprimés. La logique est intégrée directement dans les commandes/skills, en exploitant le contexte 1M d'Opus 4.6. Les résultats MCP sont mémoïsés via `lib/rag_cache.py` (obligatoire sur tous les appels `search_*`, `get_availability`, `fetch_calendar_events`). L'agent `mail-prefilter` n'apparaît pas car il n'accède pas au MCP (métadonnées seulement). Le tool `status` est appelé par toutes les commandes MCP-sensibles pour la désambiguation multi-serveurs (voir section plus bas).
+
+**Refonte v2.1.0 :** le téléchargement des mails IMAP est désormais pris en charge par le skill interne `fetch-imap` du plugin (plus de dépendance au tool MCP `check_inbox`, retiré du tableau). Corollaire : `update_index` n'est appelé par aucune commande plugin (tool `task=True` côté serveur qui provoque des timeouts client s'il est appelé en flux) — l'utilisateur le déclenche directement dans Claude Desktop après `/process-todo` quand il le souhaite.
 
 **Wrappers skills (Phase 6) :** Les skills auto-déclenchables `briefing` et `check-agenda` ne portent aucune logique propre : ils délèguent aux commandes `/briefing` et `/check-agenda`. Les appels MCP listés avec `(i)` le sont indirectement via cette délégation.
 
@@ -81,7 +81,9 @@ Le connecteur Claude in Chrome permet à Claude de piloter le navigateur de l'ut
 
 ## Configuration
 
-La configuration IMAP (serveur, identifiants) et les paramètres d'indexation sont gérés par le connecteur MCP via son fichier `.env`.
+**Configuration IMAP (plugin, depuis v2.1.0)** — La configuration IMAP (`hostname`, `port`, `username`, `password`, `use_starttls`) est gérée par le plugin lui-même dans le fichier `.todomail-config.json` du workspace, bloc `imap`. Voir la section 0c de `/todomail:start` pour la procédure de configuration interactive. Le fichier est écrit avec `chmod 600` et doit être gitignoré dans le workspace utilisateur (un mot de passe en clair y figure).
+
+**Configuration RAG et indexation (MCP)** — Les paramètres d'indexation (chemins `DOCUMENTS_PATH`, `MAILS_PATH`, modèle d'embeddings, etc.) restent gérés par le connecteur MCP via son fichier `.env`.
 
 ## Désambiguation multi-serveurs
 
