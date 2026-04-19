@@ -293,6 +293,39 @@
                 setCounts(newCounts);
             };
 
+            // Garantit qu'un instructions.json existe pour chaque categorie non
+            // vide, ecrit avec les decisions par defaut (delete pour trash,
+            // other pour les autres). Sans cela, /process-todo ne traite que
+            // les categories ouvertes par l'utilisateur dans le dashboard
+            // (les loadSubdirEmails n'etant declenche que sur switchSubdir).
+            // Idempotent : ne touche jamais un instructions.json existant.
+            const ensureAllInstructions = async (handle) => {
+                if (isLocked) return; // ne pas ecrire pendant qu'un cycle Claude tourne
+                for (const subdir of SUBDIRS) {
+                    try {
+                        const todoDir = await handle.getDirectoryHandle('todo');
+                        const categoryDir = await todoDir.getDirectoryHandle(subdir.key);
+                        // Lire pending_emails — skip si vide ou inexistant
+                        let pendingData;
+                        try {
+                            const pFh = await categoryDir.getFileHandle('pending_emails.json');
+                            pendingData = JSON.parse(await (await pFh.getFile()).text());
+                        } catch (_) { continue; }
+                        const { emails } = extractEmailsAndMeta(pendingData);
+                        if (emails.length === 0) continue;
+                        // Ne pas ecraser un instructions.json existant
+                        try {
+                            await categoryDir.getFileHandle('instructions.json');
+                            continue; // existe deja, skip
+                        } catch (_) { /* absent, on va l'ecrire */ }
+                        const defAction = subdir.key === 'trash' ? 'delete' : 'other';
+                        const defaults = {};
+                        emails.forEach(e => { defaults[e.id] = defAction; });
+                        await writeInstructions(handle, subdir.key, emails, defaults);
+                    } catch (_) { /* categorie absente, skip */ }
+                }
+            };
+
             const bootstrapHandle = async (handle) => {
                 setRootHandle(handle);
                 setPendingHandle(null);
@@ -301,6 +334,10 @@
                 loadTaskCounts(handle);
                 readWorkspaceState(handle).then(s => s && setWorkspaceState(s));
                 readInvalidateStamp(handle).then(st => st && setInvalidateStamp(st));
+                // Ecrit les instructions.json par defaut pour toutes les categories
+                // non vides qui n'en ont pas — process-todo doit pouvoir traiter
+                // les mails meme sans interaction utilisateur dans le dashboard.
+                ensureAllInstructions(handle);
                 await saveHandle(handle);
             };
 
@@ -477,6 +514,11 @@
                     loadAllCounts(handle),
                     loadTaskCounts(handle),
                 ]);
+                // Apres un cycle Claude (sort-mails ajoute des mails), garantir
+                // qu'un instructions.json par defaut existe pour les nouvelles
+                // categories non vides — sans cela le prochain process-todo
+                // ignorerait les nouveaux mails.
+                ensureAllInstructions(handle);
                 if (opts.withToast) showToast('refreshed');
             };
 
