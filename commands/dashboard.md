@@ -72,21 +72,17 @@ PY
 
   Si l'utilisateur n'a pas encore créé l'application Cloudflare Access (donc pas de `team_domain`/`access_aud`), le lui indiquer et le renvoyer vers `CLOUDFLARE-DASHBOARD.md` (section C). Ne pas lancer le serveur en mode exposé sans ces valeurs (il refuserait de démarrer).
 
-### Étape 1. Vérifier la dépendance PyJWT
+### Étape 1. Assurer la dépendance PyJWT (auto-install)
 
-Le serveur valide cryptographiquement le JWT Cloudflare Access (RS256), ce qui nécessite `PyJWT[crypto]` :
-
-```bash
-python3 -c "import jwt; print('PyJWT OK')" 2>/dev/null || echo "MANQUANT"
-```
-
-Si `MANQUANT`, installer la dépendance **dans le même interpréteur `python3`** que celui qui lancera le serveur (sinon l'import échouera au démarrage). Utiliser `python3 -m pip` (et non `pip3` nu) garantit le bon interpréteur ; le flag `--break-system-packages` est requis sur les Python « externally-managed » (Homebrew/macOS, PEP 668) et sans effet ailleurs :
+Le serveur valide cryptographiquement le JWT Cloudflare Access (RS256), ce qui nécessite `PyJWT[crypto]`. Cette étape l'installe automatiquement si absente, **dans le même interpréteur `python3`** que celui qui lancera le serveur (sinon l'import échouerait au démarrage). On utilise `python3 -m pip` (et non `pip3` nu) pour garantir le bon interpréteur ; `--break-system-packages` est requis sur les Python « externally-managed » (Homebrew/macOS, PEP 668) et sans effet ailleurs.
 
 ```bash
-python3 -m pip install --break-system-packages "PyJWT[crypto]"
+python3 -c "import jwt" 2>/dev/null \
+  || python3 -m pip install --break-system-packages "PyJWT[crypto]"
+python3 -c "import jwt, cryptography; print('PyJWT', jwt.__version__, 'OK')"
 ```
 
-Vérifier : `python3 -c "import jwt; print(jwt.__version__)"`.
+La première ligne tente l'import ; si elle échoue, elle installe. La seconde vérifie dans un processus neuf et **échoue bruyamment** si la dépendance reste indisponible (auquel cas : vérifier le réseau, ou installer manuellement la même commande). Idempotente : ne réinstalle rien si PyJWT est déjà présent.
 
 ### Étape 2. Le serveur tourne-t-il déjà ? (idempotence)
 

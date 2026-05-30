@@ -31,9 +31,11 @@ tunnel Cloudflare.
 """
 
 import argparse
+import importlib
 import json
 import mimetypes
 import os
+import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -633,6 +635,41 @@ class TodoMailHandler(BaseHTTPRequestHandler):
 # Entree
 # ---------------------------------------------------------------------------
 
+def _ensure_pyjwt() -> bool:
+    """Garantit que PyJWT est importable ; tente une auto-install sinon.
+
+    Cas « lancement direct / LaunchAgent » (sans passer par /todomail:dashboard
+    qui pre-installe la dependance) : si PyJWT manque, on tente UNE installation
+    dans CE meme interpreteur (`sys.executable`, donc le bon python) avant
+    d'abandonner. Best-effort, journalise. Desactivable via
+    `TODOMAIL_NO_AUTOINSTALL=1` pour qui ne veut pas qu'un service touche a son
+    environnement Python.
+    """
+    try:
+        import jwt  # noqa: F401
+        return True
+    except ImportError:
+        pass
+    if os.environ.get("TODOMAIL_NO_AUTOINSTALL"):
+        return False
+    print(
+        '[todomail] PyJWT absent — installation automatique '
+        '(python3 -m pip install --break-system-packages "PyJWT[crypto]")...',
+        flush=True,
+    )
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install",
+             "--break-system-packages", "PyJWT[crypto]"],
+            check=False,
+        )
+        importlib.invalidate_caches()
+        import jwt  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
 def build_config(require_auth: bool) -> ServerConfig:
     ws = workspace_dir()
     dash = get_dashboard_config(ws)
@@ -645,12 +682,11 @@ def build_config(require_auth: bool) -> ServerConfig:
                 f"(manquant: {', '.join(missing)}). Lance /todomail:dashboard "
                 "pour la renseigner, ou utilise --no-auth pour un test local."
             )
-        try:
-            import jwt  # noqa: F401
-        except ImportError:
+        if not _ensure_pyjwt():
             raise SystemExit(
-                'ERREUR: PyJWT requis pour la validation Access. Installe-le dans '
-                'CE python : python3 -m pip install --break-system-packages "PyJWT[crypto]"'
+                'ERREUR: PyJWT requis pour la validation Access, et auto-install '
+                'impossible (reseau ? droits ?). Installe-le dans CE python : '
+                'python3 -m pip install --break-system-packages "PyJWT[crypto]"'
             )
     return cfg
 
@@ -661,10 +697,10 @@ def run(port: int = 8770, host: str = "127.0.0.1", require_auth: bool = True) ->
     httpd = ThreadingHTTPServer((host, port), TodoMailHandler)
     httpd.daemon_threads = True
     mode = "Cloudflare Access (JWT)" if require_auth else "SANS AUTH (test local)"
-    print(f"[todomail] dashboard servi sur http://{host}:{port}  | auth: {mode}")
-    print(f"[todomail] workspace: {cfg.workspace}")
+    print(f"[todomail] dashboard servi sur http://{host}:{port}  | auth: {mode}", flush=True)
+    print(f"[todomail] workspace: {cfg.workspace}", flush=True)
     if not require_auth:
-        print("[todomail] AVERTISSEMENT: mode --no-auth — NE JAMAIS router dans le tunnel Cloudflare.")
+        print("[todomail] AVERTISSEMENT: mode --no-auth — NE JAMAIS router dans le tunnel Cloudflare.", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

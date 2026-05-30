@@ -7,6 +7,20 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.2.1] - 2026-05-30
+
+Patch confort/robustesse autour de la dépendance `PyJWT[crypto]` introduite en v2.2.0.
+
+### Ajouté
+
+- **Auto-install de PyJWT** — Plus besoin d'installer la dépendance à la main. La commande `/todomail:dashboard` installe automatiquement `PyJWT[crypto]` si absente (de façon synchrone, **avant** de lancer le serveur, dans le bon interpréteur). En filet de sécurité pour les lancements directs / LaunchAgent (qui ne passent pas par la commande), `lib/serve_dashboard.py` tente une auto-install best-effort au démarrage si PyJWT manque, dans `sys.executable`, journalisée. Désactivable via `TODOMAIL_NO_AUTOINSTALL=1` pour qui ne veut pas qu'un service touche à son environnement Python.
+
+### Corrigé
+
+- **Commande d'installation PyJWT compatible PEP 668** — La commande documentée `pip3 install "PyJWT[crypto]"` échouait sur les Python « externally-managed » (Homebrew/macOS, l'environnement cible réel). Remplacée partout par `python3 -m pip install --break-system-packages "PyJWT[crypto]"` (`python3 -m pip` garantit le bon interpréteur ; `--break-system-packages` requis sous PEP 668, sans effet ailleurs). Touche `commands/dashboard.md`, `CLOUDFLARE-DASHBOARD.md`, le message d'erreur de `lib/serve_dashboard.py` et la note de migration.
+
+---
+
 ## [2.2.0] - 2026-05-30
 
 Le dashboard passe en **mode tout-serveur** (Phase 7) : il n'utilise plus la File System Access API mais un serveur HTTP local (`lib/serve_dashboard.py`) qui possède le workspace et expose une API JSON. Conséquence : le dashboard fonctionne dans **tout navigateur** (Safari, Firefox, mobile), sans sélecteur de dossier ni ré-autorisation, et peut être **servi sur Internet** via le tunnel Cloudflare existant, sécurisé par **Cloudflare Access** (mono-utilisateur). Le protocole fichier entre le dashboard et Claude (`instructions.json`, `state.json`, fichiers-marqueurs) est strictement inchangé — aucune modification de `/process-todo`, `/check-inbox`, `/briefing`, `/check-agenda` ou des hooks.
