@@ -30,7 +30,7 @@ Le dashboard passe en **mode tout-serveur** (Phase 7) : il n'utilise plus la Fil
 
 ### Migration
 
-- Depuis une v2.1.x : suivre `CLOUDFLARE-DASHBOARD.md` une fois (route tunnel + application Cloudflare Access), installer `pip3 install "PyJWT[crypto]"`, puis lancer `/todomail:dashboard`. La commande renseigne le bloc `dashboard` de `.todomail-config.json` (schéma bumpé en v3 à la première écriture).
+- Depuis une v2.1.x : suivre `CLOUDFLARE-DASHBOARD.md` une fois (route tunnel + application Cloudflare Access), installer la dépendance dans le `python3` de Claude Code (`python3 -m pip install --break-system-packages "PyJWT[crypto]"` ; `--break-system-packages` requis sur les Python Homebrew/macOS « externally-managed », sans effet ailleurs), puis lancer `/todomail:dashboard`. La commande renseigne le bloc `dashboard` de `.todomail-config.json` (schéma bumpé en v3 à la première écriture).
 - Le fichier `dashboard.html` est mis à jour par `/todomail:start` (copie si la version plugin est plus récente). Plus aucune dépendance à un navigateur Chromium.
 
 ---

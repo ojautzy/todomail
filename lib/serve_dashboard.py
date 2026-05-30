@@ -649,8 +649,8 @@ def build_config(require_auth: bool) -> ServerConfig:
             import jwt  # noqa: F401
         except ImportError:
             raise SystemExit(
-                'ERREUR: PyJWT requis pour la validation Access. '
-                'Installe-le : pip install "PyJWT[crypto]"'
+                'ERREUR: PyJWT requis pour la validation Access. Installe-le dans '
+                'CE python : python3 -m pip install --break-system-packages "PyJWT[crypto]"'
             )
     return cfg
 

@@ -80,11 +80,13 @@ Le serveur valide cryptographiquement le JWT Cloudflare Access (RS256), ce qui n
 python3 -c "import jwt; print('PyJWT OK')" 2>/dev/null || echo "MANQUANT"
 ```
 
-Si `MANQUANT`, proposer à l'utilisateur d'installer la dépendance :
+Si `MANQUANT`, installer la dépendance **dans le même interpréteur `python3`** que celui qui lancera le serveur (sinon l'import échouera au démarrage). Utiliser `python3 -m pip` (et non `pip3` nu) garantit le bon interpréteur ; le flag `--break-system-packages` est requis sur les Python « externally-managed » (Homebrew/macOS, PEP 668) et sans effet ailleurs :
 
 ```bash
-pip3 install "PyJWT[crypto]"
+python3 -m pip install --break-system-packages "PyJWT[crypto]"
 ```
+
+Vérifier : `python3 -c "import jwt; print(jwt.__version__)"`.
 
 ### Étape 2. Le serveur tourne-t-il déjà ? (idempotence)
 
