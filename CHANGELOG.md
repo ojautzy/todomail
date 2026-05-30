@@ -7,6 +7,34 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.2.0] - 2026-05-30
+
+Le dashboard passe en **mode tout-serveur** (Phase 7) : il n'utilise plus la File System Access API mais un serveur HTTP local (`lib/serve_dashboard.py`) qui possède le workspace et expose une API JSON. Conséquence : le dashboard fonctionne dans **tout navigateur** (Safari, Firefox, mobile), sans sélecteur de dossier ni ré-autorisation, et peut être **servi sur Internet** via le tunnel Cloudflare existant, sécurisé par **Cloudflare Access** (mono-utilisateur). Le protocole fichier entre le dashboard et Claude (`instructions.json`, `state.json`, fichiers-marqueurs) est strictement inchangé — aucune modification de `/process-todo`, `/check-inbox`, `/briefing`, `/check-agenda` ou des hooks.
+
+### Ajouté
+
+- **Serveur du dashboard `lib/serve_dashboard.py`** — Serveur HTTP stdlib (`ThreadingHTTPServer`) bind `127.0.0.1`, qui sert `dashboard.html` et expose une API JSON reproduisant 1:1 les opérations fichier de l'ancien dashboard (`/api/poll`, `/api/categories`, `/api/category/{cat}/emails|mail|instructions`, `/api/markers/*`, `/api/tasks/*`, `/api/memory/*`). Réutilise `lib.fs_utils` et `lib.state` (n'acquiert jamais le verrou). Garde anti-traversée de chemin (realpath confiné au workspace), refus `409` des écritures pendant qu'un cycle Claude tient le verrou.
+- **Commande `/todomail:dashboard`** — Configure (port, hostname, `team_domain`, `access_aud`), vérifie la dépendance `PyJWT[crypto]`, lance le serveur détaché (survit à la session Claude), guide l'ajout de la route ingress Cloudflare et valide la sécurité. Idempotente.
+- **Authentification Cloudflare Access (JWT)** — Le serveur valide le JWT `Cf-Access-Jwt-Assertion` (signature RS256 + audience + émetteur) sur chaque requête `/api/*`. Un accès direct au port loopback, sans passer par Cloudflare, renvoie `403` : il n'existe qu'un seul point d'entrée authentifié, l'URL publique. Dépendance `PyJWT[crypto]`.
+- **Bloc `dashboard` dans `.todomail-config.json` (schéma v3)** — `port`, `hostname`, `team_domain`, `access_aud`. `lib/config.py` expose `save_dashboard_config()` / `get_dashboard_config()` (préservent les blocs voisins, `chmod 600`). Migration v2 → v3 transparente.
+- **Guide `CLOUDFLARE-DASHBOARD.md`** — Procédure unique de mise en service du tunnel + Cloudflare Access (route DNS, ingress, application Access OTP mono-email, récupération de l'AUD/team_domain, tests, LaunchAgent optionnel).
+
+### Modifié
+
+- **`skills/dashboard.html` — refactor HTTP-only** — La couche d'I/O (≈20 fonctions) passe d'appels File System Access à des appels `fetch()` vers l'API. Les vues React et les parseurs (`parseConsultMd`, `parseFrontmatter`, etc.) sont inchangés ; le polling 3s consolidé sur `/api/poll`.
+- **`/todomail:start`, `/todomail:check-inbox`** — Plus de mention d'ouverture `file://` ; renvoient vers `/todomail:dashboard` et l'URL publique. `/start` copie toujours `dashboard.html` à la racine du workspace (servi par le serveur).
+
+### Supprimé
+
+- **Mode `file://` (File System Access API)** — Suppression de tout le code devenu inutile dans `dashboard.html` : persistance IndexedDB du `DirectoryHandle`, sélecteur de dossier, écran de reconnexion, garde « navigateur non supporté » (Chromium-only), helpers de parsing v1/v2 côté client (`extractEmails*`). Le dashboard local s'ouvre désormais via `http://127.0.0.1:<port>` dans n'importe quel navigateur.
+
+### Migration
+
+- Depuis une v2.1.x : suivre `CLOUDFLARE-DASHBOARD.md` une fois (route tunnel + application Cloudflare Access), installer `pip3 install "PyJWT[crypto]"`, puis lancer `/todomail:dashboard`. La commande renseigne le bloc `dashboard` de `.todomail-config.json` (schéma bumpé en v3 à la première écriture).
+- Le fichier `dashboard.html` est mis à jour par `/todomail:start` (copie si la version plugin est plus récente). Plus aucune dépendance à un navigateur Chromium.
+
+---
+
 ## [2.1.0] - 2026-04-19
 
 Migration du téléchargement IMAP depuis le serveur MCP externe vers le plugin lui-même. Le connecteur MCP (`~~todomail-mcp`, `archiva-pro` en production) n'est plus sollicité pour le téléchargement des mails — sa responsabilité se limite désormais au RAG (base documentaire, archives mails) et aux calendriers iCalendar.
@@ -88,7 +116,7 @@ Release consolidée du refactoring v2.0 vers Claude Code (Opus 4.6 1M). Cette re
 ### Reporté en v2.1.x
 
 - **Normalisation des `session_id`** entre `sort-mails` (UUID custom) et `lib/state.py` (format timestamp). Pas de bug fonctionnel — la bannière qui en dépendait a été retirée.
-- **Mode serveur HTTP local** (Phase 7) — Compatibilité Safari, Orion, Firefox via `lib/serve_dashboard.py` + nouvelle commande `/todomail:dashboard`. Élimine aussi les frictions `file://` (IndexedDB, permissions Chromium) pour les utilisateurs Chromium actuels.
+- **Mode serveur HTTP local** (Phase 7) — ✅ **Réalisé en v2.2.0** (étendu à l'exposition Internet via Cloudflare Access). Compatibilité Safari, Orion, Firefox, mobile via `lib/serve_dashboard.py` + commande `/todomail:dashboard`. Élimine les frictions `file://` (IndexedDB, permissions Chromium).
 
 ### Critères d'acceptation v2.0.0 (validés)
 
