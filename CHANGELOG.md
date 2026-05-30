@@ -7,6 +7,14 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.2.3] - 2026-05-30
+
+### Corrigé
+
+- **Dashboard servi : copie plugin au lieu de la copie workspace** — Le serveur servait en priorité le `dashboard.html` présent à la racine du workspace. Une copie périmée (posée par un `/todomail:start` antérieur au mode serveur) masquait silencieusement la version du plugin et servait l'ancienne page File System Access (bouton « Ouvrir Projet » + sélecteur de dossier), inutilisable à distance. `lib/serve_dashboard.py` sert désormais la **copie canonique du plugin** (`<plugin>/skills/dashboard.html`, résolue via `__file__`, robuste même sans `CLAUDE_PLUGIN_ROOT` dans l'environnement du process serveur), avec fallback sur la copie workspace. La page servie suit donc toujours la version du plugin installé, quelle que soit une vieille copie traînant dans le workspace.
+
+---
+
 ## [2.2.1] - 2026-05-30
 
 Patch confort/robustesse autour de la dépendance `PyJWT[crypto]` introduite en v2.2.0.

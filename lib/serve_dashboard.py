@@ -46,6 +46,11 @@ _PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT")
 if _PLUGIN_ROOT and _PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT)
 
+# Racine du plugin deduite du fichier lui-meme (lib/serve_dashboard.py ->
+# <plugin>) : robuste meme si CLAUDE_PLUGIN_ROOT n'est pas dans l'env du
+# process serveur. Sert a localiser la copie canonique de dashboard.html.
+_PLUGIN_DIR = Path(__file__).resolve().parent.parent
+
 from lib.config import get_dashboard_config  # noqa: E402
 from lib.fs_utils import (  # noqa: E402
     atomic_read_json,
@@ -374,16 +379,19 @@ class TodoMailHandler(BaseHTTPRequestHandler):
     # =======================================================================
 
     def _serve_dashboard_html(self) -> None:
-        path = self.safe_resolve("dashboard.html")
-        if not path.is_file():
-            # Fallback : copie du plugin
-            if _PLUGIN_ROOT:
-                fallback = Path(_PLUGIN_ROOT) / "skills" / "dashboard.html"
-                if fallback.is_file():
-                    data = fallback.read_bytes()
-                    return self._send_bytes(data, "text/html; charset=utf-8")
-            return self._send_error_json(404, "dashboard.html introuvable")
-        self._send_bytes(path.read_bytes(), "text/html; charset=utf-8")
+        # On sert la copie du PLUGIN (alignee sur la version installee qui
+        # execute ce serveur), pas la copie a la racine du workspace : cette
+        # derniere peut etre perimee (posee par un ancien /start anterieur au
+        # mode serveur), ce qui ferait servir une vieille page File System
+        # Access (bouton « Ouvrir Projet » + picker) inutilisable a distance.
+        # Fallback sur la copie workspace si la copie plugin est introuvable.
+        plugin_copy = _PLUGIN_DIR / "skills" / "dashboard.html"
+        if plugin_copy.is_file():
+            return self._send_bytes(plugin_copy.read_bytes(), "text/html; charset=utf-8")
+        ws_copy = self.safe_resolve("dashboard.html")
+        if ws_copy.is_file():
+            return self._send_bytes(ws_copy.read_bytes(), "text/html; charset=utf-8")
+        self._send_error_json(404, "dashboard.html introuvable")
 
     def _api_poll(self) -> None:
         state = load_state()
