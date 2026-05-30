@@ -29,10 +29,11 @@ Un accès direct à `http://127.0.0.1:8770` (sans passer par Cloudflare) renvoie
 - `cloudflared` installé et un tunnel déjà opérationnel (ici `~/.cloudflared/config.yml`).
 - Le domaine (`jautzy.com`) géré par Cloudflare.
 - Accès au dashboard **Cloudflare Zero Trust** : <https://one.dash.cloudflare.com>.
-- La dépendance Python du serveur :
+- La dépendance Python du serveur, installée **dans le même interpréteur `python3`** que celui utilisé par Claude Code (utiliser `python3 -m pip` ; `--break-system-packages` est requis sur les Python Homebrew/macOS « externally-managed » (PEP 668), sans effet ailleurs) :
   ```bash
-  pip3 install "PyJWT[crypto]"
+  python3 -m pip install --break-system-packages "PyJWT[crypto]"
   ```
+  Vérification : `python3 -c "import jwt; print(jwt.__version__)"`. Le plus fiable est de lancer cette installation **depuis Claude Code** (`/todomail:dashboard` le propose), pour garantir le même interpréteur que le serveur.
 
 ## B. Router le hostname vers le tunnel
 
