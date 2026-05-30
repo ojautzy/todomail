@@ -122,6 +122,8 @@ Vérifie que le fichier `dashboard.html` existe à la racine du répertoire de t
 
 **Si `dashboard.html` n'existe pas ou si la version du plugin est plus récente :** Copie le fichier `${CLAUDE_PLUGIN_ROOT}/skills/dashboard.html` vers la racine du répertoire de travail.
 
+Depuis la v2.2.0, le dashboard n'est plus ouvert en `file://` : il est servi par un serveur local (`lib/serve_dashboard.py`) et s'ouvre dans **tout navigateur** (Safari, Firefox, mobile) via une URL publique sécurisée par Cloudflare Access. Lancer `/todomail:dashboard` pour le démarrer. Mise en service initiale du tunnel + Access : voir `CLOUDFLARE-DASHBOARD.md`.
+
 ### Étape 2. Vérifie l'existence de la mémoire
 
 Vérifie que le répertoire de travail contient :
@@ -134,6 +136,7 @@ Vérifie que le répertoire de travail contient :
 Si tout existait déjà :
 ```
 Le système est opérationnel.
+- /todomail:dashboard pour ouvrir le dashboard (Safari, Firefox, mobile, depuis n'importe où)
 - /todomail:check-inbox pour télécharger les derniers mails et les classer
 - /todomail:process-todo pour exécuter les instructions du dashboard
 - /todomail:briefing pour préparer les réunions du jour
@@ -250,6 +253,7 @@ Informe des résultats du bootstrap et des statistiques : nombre de lignes de CL
 
 ```
 Le système est opérationnel.
+- /todomail:dashboard pour ouvrir le dashboard (Safari, Firefox, mobile, depuis n'importe où)
 - /todomail:check-inbox pour télécharger les derniers mails et les classer
 - /todomail:process-todo pour exécuter les instructions du dashboard
 - /todomail:briefing pour préparer les réunions du jour

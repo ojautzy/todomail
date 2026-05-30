@@ -11,31 +11,27 @@ L'application est une interface **"Human-in-the-loop"** (l'humain dans la boucle
 * **L'Utilisateur** navigue entre les catégories, consulte les synthèses contextuelles et ajuste les actions si nécessaire.
 * **Claude** exécute les décisions via le skill `process-todo` basé sur les fichiers `instructions.json` générés automatiquement par le dashboard.
 
-## **2\. Prérequis**
+## **2\. Architecture (v2.2.0 — mode serveur)**
+
+Depuis la v2.2.0, le dashboard n'utilise plus la File System Access API. Il est servi par un **serveur HTTP local** (`lib/serve_dashboard.py`) qui possède le workspace et expose une **API JSON**. Le navigateur est un client léger qui appelle cette API en `fetch()`. Le filesystem reste le bus de messages avec Claude : le serveur lit/écrit exactement les mêmes fichiers (`instructions.json`, `.todomail/state.json`, fichiers-marqueurs) que l'ancien dashboard.
+
+```
+Navigateur (n'importe où) ──https──► Cloudflare Access ──tunnel──► serveur Python (127.0.0.1) ──► workspace
+```
 
 ### Navigateurs supportés
 
-Le dashboard utilise l'API **File System Access** pour lire et écrire directement dans le dossier de travail sans serveur backend. Cette API n'est disponible que dans les moteurs Chromium.
+**Tous** : le mode serveur fonctionne dans n'importe quel navigateur — Chrome, Edge, Arc, Brave, **Safari, Firefox, et les navigateurs mobiles**. Plus de restriction Chromium, plus de sélecteur de dossier, plus de ré-autorisation.
 
-| Navigateur | Support |
-|---|---|
-| Google Chrome, Microsoft Edge, Arc, DIA, Opera, Brave, Vivaldi | ✅ supporté |
-| Safari, Orion (moteurs WebKit — Apple refuse l'API) | ❌ non supporté |
-| Firefox | ❌ non supporté |
+### Accès
 
-Les navigateurs non supportés affichent un écran d'avertissement au chargement.
-
-Un **mode compatible universel** basé sur un micro-serveur HTTP local (commande plugin dédiée) est suivi dans l'issue *Phase 5.5* et permettra d'utiliser le dashboard dans Safari/Firefox à terme.
-
-### Environnement
-
-* **Accès en lecture/écriture** accordé par l'utilisateur sur le répertoire racine du projet lors de la connexion initiale (une seule autorisation pour toutes les catégories).
-* **Reconnexion automatique (alpha.8+)** : le `DirectoryHandle` est persisté via IndexedDB. Au prochain chargement du dashboard, si la permission n'a pas expiré côté navigateur, la connexion se refait silencieusement sans picker. Si elle a expiré, un bouton « Reprendre la connexion » permet de ré-autoriser en un clic, sans re-sélectionner le dossier.
-* **Bouton « Oublier ce projet »** à côté de l'indicateur « Projet connecté » pour invalider le handle persisté (utile si tu changes de workspace).
+* **Local** : `http://127.0.0.1:<port>` (le serveur tourne sur le Mac). En pratique, on passe par l'URL publique même en local (voir ci-dessous).
+* **Internet** : `https://<hostname>` (ex. `https://todomail.jautzy.com`) via le tunnel Cloudflare, protégé par **Cloudflare Access** (authentification par code à usage unique envoyé à l'email autorisé). Mono-utilisateur, accessible depuis n'importe où.
+* Démarrage : commande `/todomail:dashboard`. Mise en service initiale du tunnel + Access : voir `CLOUDFLARE-DASHBOARD.md`.
 
 ### Technologies
 
-React 18, Tailwind CSS, Lucide Icons (chargés via CDN pour une portabilité totale sans installation).
+React 18, Tailwind CSS, Lucide Icons (chargés via CDN). API JSON servie par un serveur Python stdlib (`http.server`), validation JWT via `PyJWT[crypto]`.
 
 ## **3\. Structure du Répertoire de Travail**
 
@@ -93,7 +89,7 @@ Chaque fichier `pending_emails.json` est généré par Claude (étape 3 du skill
 - **v1 (legacy, jusqu'à la v1.4.1)** : tableau brut — `[ { ... }, { ... } ]`.
 - **v2 (alpha.3+)** : wrapper `{ "_meta": { "schema_version": 2, "session_id": "...", "generated_at": "..." }, "emails": [ ... ] }`.
 
-Le dashboard lit les deux formats de manière transparente (fonction `extractEmails(data)` qui renvoie toujours un tableau, et `extractEmailsAndMeta(data)` qui renvoie aussi le bloc `_meta` pour le banner de fraîcheur introduit en alpha.8). Il continue à écrire le format v1 dans les `instructions.json` ; la helper `extractInstructionsAndMeta(data)` permet de relire indifféremment v1 et v2.
+Depuis la v2.2.0, c'est le **serveur** (`lib.fs_utils.read_v2_json`) qui lit les deux formats de manière transparente et renvoie au dashboard une liste déjà parsée plus le bloc `_meta`. Le serveur écrit les `instructions.json` en **v2** (`write_instructions`) ; la rétrocompatibilité v1 en lecture reste assurée.
 
 Les exemples ci-dessous présentent le contenu d'une entrée du tableau `emails` (v2) ou d'une entrée du tableau racine (v1) — les champs sont identiques :
 
@@ -188,7 +184,7 @@ Fichier généré et mis à jour automatiquement par le dashboard. Un fichier `i
 [{ "id": "2026-02-18_13h24m00_1", "action": "other" }]
 ```
 
-**Formats supportés en lecture** (depuis 2.0.0-alpha.3) : v1 = tableau brut (comme ci-dessus), v2 = `{ "_meta": { ... }, "instructions": [ ... ] }`. Le dashboard écrit encore en v1 ; `process-todo` (Phase 3) produira du v2.
+**Formats supportés en lecture** (depuis 2.0.0-alpha.3) : v1 = tableau brut (comme ci-dessus), v2 = `{ "_meta": { ... }, "instructions": [ ... ] }`. Depuis la v2.2.0, le serveur écrit en v2 (`write_instructions`) ; la lecture v1 reste supportée.
 
 Valeurs possibles pour la balise `action` :
 
@@ -220,8 +216,7 @@ Le dashboard dispose d'un menu de navigation dans l'en-tête avec des onglets po
 ### Navigation multi-catégories
 
 * **Sidebar verticale :** Panneau de navigation fixe sur la gauche, affichant les 7 catégories avec icônes et labels complets, toujours visibles.
-* **Chargement dynamique :** Chaque catégorie charge ses propres données depuis son `pending_emails.json`.
-* **Autorisation unique :** L'utilisateur n'a besoin d'autoriser l'accès au répertoire qu'une seule fois au démarrage.
+* **Chargement dynamique :** Chaque catégorie charge ses propres données depuis son `pending_emails.json` (via l'API serveur).
 * **Affichage contextuel :** Les champs affichés dans les cartes d'email s'adaptent automatiquement à la catégorie sélectionnée.
 * **Badge compteur :** Chaque catégorie affiche le nombre de mails qu'elle contient dans la sidebar (style accentué pour la catégorie active, style discret pour les autres). Les compteurs sont chargés au démarrage pour toutes les catégories et mis à jour dynamiquement lors de la navigation.
 * **Carte dépliable :** Chaque carte mail dispose d'un bouton de déploiement (chevron) qui affiche l'intégralité du texte des champs générés sans ouvrir le mail complet. Un scrollbar apparaît automatiquement si le contenu dépasse la zone dépliable.
@@ -245,8 +240,8 @@ Le dashboard dispose d'un menu de navigation dans l'en-tête avec des onglets po
 
 ### Gestion du Système de Fichiers
 
-* **Accès Direct :** Utilise window.showDirectoryPicker() pour manipuler les fichiers sans serveur backend.
-* **Visualisation de Documents :** Ouverture des pièces jointes via des *Blob URLs* éphémères dans de nouveaux onglets.
+* **Via l'API serveur :** Toutes les lectures/écritures passent par l'API JSON du serveur (`/api/*`), qui opère sur le workspace côté Mac (réutilise `lib/fs_utils.py` et `lib/state.py`).
+* **Visualisation de Documents :** Ouverture des pièces jointes via leur URL serveur (`/api/category/.../file/...`, `/api/tasks/to-work/.../file/...`) dans de nouveaux onglets — le serveur stream les octets avec le bon type MIME.
 
 ### Navigation et Filtres
 
@@ -310,9 +305,9 @@ Corps du mail en markdown...
 Liste les sous-répertoires de `to-work/`. Chaque répertoire représente une tâche.
 
 * **Carte par répertoire** : nom du répertoire = nom de la tâche
-* **Flyover** (carte dépliable) : contenu de `checklist.md` avec rendu des checkboxes markdown, liste des documents présents (tout fichier sauf `checklist.md`) avec ouverture via Blob URL
+* **Flyover** (carte dépliable) : contenu de `checklist.md` avec rendu des checkboxes markdown, liste des documents présents (tout fichier sauf `checklist.md`) avec ouverture via leur URL serveur
 * **Édition** : bouton ouvrant une modale textarea pour éditer `checklist.md`
-* **Suppression** : checkbox avec confirmation inline — supprime récursivement le répertoire (`removeEntry` avec `{ recursive: true }`)
+* **Suppression** : checkbox avec confirmation inline — supprime récursivement le répertoire (API `DELETE`, `lib.fs_utils.safe_rm`)
 
 ### Patterns UX communs (vue Tâches)
 
@@ -380,7 +375,13 @@ Si `state.errors[]` contient des entrées, un panneau rouge déployable liste le
 
 Ces fichiers-marqueurs sont supprimés après consommation. L'architecture évite toute écriture concurrente du `state.json` entre le navigateur et les processus Python.
 
-## **9\. Principes de Sécurité**
+## **9\. Principes de Sécurité** *(v2.2.0)*
 
-* **Sandboxing :** L'application n'accède qu'au dossier explicitement sélectionné par l'utilisateur.
-* **Zéro Cloud :** Aucune donnée ne quitte la machine de l'utilisateur. Les fichiers sont lus et écrits localement par le navigateur.
+Sécurité forte, mono-utilisateur (pas de gestion de comptes). Détail et mise en service : `CLOUDFLARE-DASHBOARD.md`.
+
+* **Bind loopback :** le serveur n'écoute que sur `127.0.0.1` — joignable uniquement par le démon cloudflared, jamais directement sur le LAN/WAN.
+* **Cloudflare Access (OTP email) :** authentification au edge Cloudflare, avant que le trafic n'atteigne le Mac. Seul l'email autorisé dans la policy peut se connecter.
+* **Validation JWT côté serveur :** chaque requête `/api/*` doit porter le header `Cf-Access-Jwt-Assertion` injecté par Access ; le serveur vérifie sa signature RS256, son audience et son émetteur. Un accès direct au port loopback (bypass de Cloudflare) renvoie donc `403` — il n'existe qu'un seul point d'entrée authentifié, l'URL publique. Le header étant injecté par le edge et non un cookie navigateur, c'est aussi la défense contre le CSRF.
+* **Garde anti-traversée :** chaque paramètre de chemin est résolu en realpath et confiné au workspace (rejet de `../`, des chemins absolus et des évasions par symlink).
+* **Verrou :** les écritures sont refusées (`409`) pendant qu'un cycle Claude tient le verrou.
+* **TLS :** terminé au edge Cloudflare (certificat managé) ; aucun certificat à gérer sur le Mac.

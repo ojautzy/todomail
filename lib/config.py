@@ -7,7 +7,10 @@ Ce fichier, situe a la racine du repertoire de travail de l'utilisateur
   MCP sont connectes simultanement dans Claude Desktop ;
 - depuis la v2.1.0, la configuration IMAP du plugin (bloc `imap`), qui
   remplace la dependance au tool MCP `check_inbox` pour le telechargement
-  des mails.
+  des mails ;
+- depuis la v2.2.0, la configuration du dashboard servi sur Internet
+  (bloc `dashboard` : port local, hostname public, et identifiants
+  Cloudflare Access `team_domain`/`access_aud`).
 
 Schema v2 (v2.1.0+) :
 
@@ -44,7 +47,7 @@ from lib.fs_utils import atomic_read_json, atomic_write_json, chmod_600
 
 
 CONFIG_FILENAME = ".todomail-config.json"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def config_path(workspace: Path) -> Path:
@@ -85,6 +88,8 @@ def save_config(workspace: Path, expected_rag_name: str) -> dict:
     }
     if "imap" in existing:
         data["imap"] = existing["imap"]
+    if "dashboard" in existing:
+        data["dashboard"] = existing["dashboard"]
     return _write_config(workspace, data)
 
 
@@ -119,10 +124,63 @@ def save_imap_config(
             "use_starttls": bool(use_starttls),
         },
     }
+    if "dashboard" in existing:
+        data["dashboard"] = existing["dashboard"]
     # Drop a None expected_rag_name to keep JSON tidy if never configured
     if data["expected_rag_name"] is None:
         del data["expected_rag_name"]
     return _write_config(workspace, data)
+
+
+def save_dashboard_config(
+    workspace: Path,
+    port: int,
+    hostname: str,
+    team_domain: str | None = None,
+    access_aud: str | None = None,
+) -> dict:
+    """Create or update the `dashboard` block in the workspace config.
+
+    Stores the parameters needed by `lib.serve_dashboard` and the
+    `/todomail:dashboard` command : local port, public hostname, and the
+    Cloudflare Access identifiers (`team_domain`, `access_aud`) used to
+    validate the JWT. Preserves `expected_rag_name` and `imap` if present.
+    Bumps the schema to v3 and applies 0o600 permissions.
+
+    Returns the saved config dict.
+    """
+    existing = load_config(workspace) or {}
+    data: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "expected_rag_name": existing.get("expected_rag_name"),
+        "configured_at": existing.get(
+            "configured_at",
+            datetime.now(timezone.utc).isoformat(),
+        ),
+        "dashboard": {
+            "port": int(port),
+            "hostname": hostname,
+            "team_domain": team_domain,
+            "access_aud": access_aud,
+        },
+    }
+    if "imap" in existing:
+        data["imap"] = existing["imap"]
+    if data["expected_rag_name"] is None:
+        del data["expected_rag_name"]
+    return _write_config(workspace, data)
+
+
+def get_dashboard_config(workspace: Path) -> dict | None:
+    """Return the `dashboard` block of the workspace config, or None.
+
+    Convenience reader used by `lib.serve_dashboard` (resolves the
+    Cloudflare Access parameters) and by `/todomail:dashboard`.
+    """
+    cfg = load_config(workspace)
+    if cfg is None:
+        return None
+    return cfg.get("dashboard")
 
 
 def check_rag_name(workspace: Path, actual_rag_name: str) -> tuple[bool, str | None]:

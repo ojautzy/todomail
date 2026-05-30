@@ -96,34 +96,6 @@
             return md;
         }
 
-        // Retro-compat lecture pending_emails.json : accepte v1 (tableau brut)
-        // et v2 (wrapper { "_meta": ..., "emails": [...] }). Renvoie toujours
-        // un tableau.
-        function extractEmails(data) {
-            if (Array.isArray(data)) return data;
-            if (data && Array.isArray(data.emails)) return data.emails;
-            return [];
-        }
-
-        // Variante v2 : renvoie aussi le bloc _meta pour le banner de fraicheur.
-        function extractEmailsAndMeta(data) {
-            if (Array.isArray(data)) return { emails: data, meta: null };
-            if (data && Array.isArray(data.emails)) {
-                return { emails: data.emails, meta: data._meta || null };
-            }
-            return { emails: [], meta: null };
-        }
-
-        // Retro-compat lecture instructions.json : v1 (tableau brut) ou
-        // v2 (wrapper { "_meta": ..., "instructions": [...] }).
-        function extractInstructionsAndMeta(data) {
-            if (Array.isArray(data)) return { instructions: data, meta: null };
-            if (data && Array.isArray(data.instructions)) {
-                return { instructions: data.instructions, meta: data._meta || null };
-            }
-            return { instructions: [], meta: null };
-        }
-
         // Extract recipient display name from filename like "jean-martin_01.md"
         function recipientFromFilename(filename) {
             const base = filename.replace(/\.md$/, '');
@@ -132,78 +104,57 @@
             return parts.join('_').split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
         }
 
-        // Recursive directory removal via File System Access API
-        async function removeDirectoryRecursive(parentHandle, dirName) {
-            await parentHandle.removeEntry(dirName, { recursive: true });
-        }
-
-        // ========== PHASE 5 — Persistance du DirectoryHandle via IndexedDB ==========
-        // Le navigateur peut persister un FileSystemDirectoryHandle entre sessions.
-        // Apres la premiere autorisation, on evite le picker a chaque rechargement :
-        // un simple queryPermission() suffit, et si l'autorisation a survecu
-        // (cas typique en session Chromium/DIA), l'utilisateur ne voit rien du tout.
-
-        const DB_NAME = 'todomail-dashboard';
-        const DB_STORE = 'handles';
-        const DB_KEY = 'rootHandle';
-
-        function openHandleDb() {
-            return new Promise((resolve, reject) => {
-                const req = indexedDB.open(DB_NAME, 1);
-                req.onupgradeneeded = () => {
-                    req.result.createObjectStore(DB_STORE);
-                };
-                req.onsuccess = () => resolve(req.result);
-                req.onerror = () => reject(req.error);
-            });
-        }
-
-        async function saveHandle(handle) {
-            try {
-                const db = await openHandleDb();
-                await new Promise((resolve, reject) => {
-                    const tx = db.transaction(DB_STORE, 'readwrite');
-                    tx.objectStore(DB_STORE).put(handle, DB_KEY);
-                    tx.oncomplete = () => resolve();
-                    tx.onerror = () => reject(tx.error);
-                });
-                db.close();
-            } catch (e) { console.warn('IndexedDB saveHandle:', e); }
-        }
-
-        async function loadHandle() {
-            try {
-                const db = await openHandleDb();
-                const handle = await new Promise((resolve, reject) => {
-                    const tx = db.transaction(DB_STORE, 'readonly');
-                    const req = tx.objectStore(DB_STORE).get(DB_KEY);
-                    req.onsuccess = () => resolve(req.result || null);
-                    req.onerror = () => reject(req.error);
-                });
-                db.close();
-                return handle;
-            } catch (e) { console.warn('IndexedDB loadHandle:', e); return null; }
-        }
-
-        async function clearHandle() {
-            try {
-                const db = await openHandleDb();
-                await new Promise((resolve, reject) => {
-                    const tx = db.transaction(DB_STORE, 'readwrite');
-                    tx.objectStore(DB_STORE).delete(DB_KEY);
-                    tx.oncomplete = () => resolve();
-                    tx.onerror = () => reject(tx.error);
-                });
-                db.close();
-            } catch (e) { console.warn('IndexedDB clearHandle:', e); }
-        }
+        // ========== Client API HTTP ==========
+        // Depuis la v2.2.0, le dashboard est servi par un serveur Python
+        // (lib/serve_dashboard.py) qui possede le workspace. Le navigateur ne
+        // touche plus au filesystem : il parle au serveur en fetch(). Le serveur
+        // est protege par Cloudflare Access (JWT injecte cote edge) — rien a
+        // gerer ici. Marche dans tout navigateur (Safari, Firefox, mobile).
+        const api = {
+            async _json(method, path, body) {
+                const opts = { method };
+                if (body !== undefined) {
+                    opts.headers = { 'Content-Type': 'application/json' };
+                    opts.body = JSON.stringify(body);
+                }
+                const res = await fetch(path, opts);
+                if (res.status === 409) { const e = new Error('locked'); e.locked = true; throw e; }
+                if (!res.ok) { const e = new Error('http ' + res.status); e.status = res.status; throw e; }
+                const ct = res.headers.get('content-type') || '';
+                return ct.includes('application/json') ? res.json() : res.text();
+            },
+            poll() { return this._json('GET', '/api/poll'); },
+            categories() { return this._json('GET', '/api/categories'); },
+            categoryEmails(cat) { return this._json('GET', `/api/category/${encodeURIComponent(cat)}/emails`); },
+            putInstructions(cat, instructions) { return this._json('PUT', `/api/category/${encodeURIComponent(cat)}/instructions`, { instructions }); },
+            mail(cat, id) { return this._json('GET', `/api/category/${encodeURIComponent(cat)}/mail/${encodeURIComponent(id)}`); },
+            mailFileUrl(cat, id, name) { return `/api/category/${encodeURIComponent(cat)}/mail/${encodeURIComponent(id)}/file/${encodeURIComponent(name)}`; },
+            markerRetry(mailIds) { return this._json('POST', '/api/markers/retry', { mail_ids: mailIds }); },
+            markerDismiss(mailId) { return this._json('POST', '/api/markers/dismiss', { mail_id: mailId }); },
+            tasksCounts() { return this._json('GET', '/api/tasks/counts'); },
+            consultGet() { return this._json('GET', '/api/tasks/consult'); },
+            consultPut(content) { return this._json('PUT', '/api/tasks/consult', { content }); },
+            toSendGet() { return this._json('GET', '/api/tasks/to-send'); },
+            toSendPut(name, content) { return this._json('PUT', `/api/tasks/to-send/${encodeURIComponent(name)}`, { content }); },
+            toSendDelete(name) { return this._json('DELETE', `/api/tasks/to-send/${encodeURIComponent(name)}`); },
+            toWorkGet() { return this._json('GET', '/api/tasks/to-work'); },
+            toWorkChecklistPut(dir, content) { return this._json('PUT', `/api/tasks/to-work/${encodeURIComponent(dir)}/checklist`, { content }); },
+            toWorkDelete(dir) { return this._json('DELETE', `/api/tasks/to-work/${encodeURIComponent(dir)}`); },
+            toWorkFileUrl(dir, name) { return `/api/tasks/to-work/${encodeURIComponent(dir)}/file/${encodeURIComponent(name)}`; },
+            memoryCounts() { return this._json('GET', '/api/memory/counts'); },
+            memoryGet(section) { return this._json('GET', `/api/memory/${encodeURIComponent(section)}`); },
+            memoryPut(section, name, content) { return this._json('PUT', `/api/memory/${encodeURIComponent(section)}/${encodeURIComponent(name)}`, { content }); },
+            memoryDelete(section, name) { return this._json('DELETE', `/api/memory/${encodeURIComponent(section)}/${encodeURIComponent(name)}`); },
+        };
 
         function App() {
             const [isDark, setIsDark] = useState(false);
-            const [rootHandle, setRootHandle] = useState(null);
-            const [browserSupported] = useState(() => typeof window.showDirectoryPicker === 'function');
-            const [reconnecting, setReconnecting] = useState(true); // tentative reconnexion auto au mount
-            const [pendingHandle, setPendingHandle] = useState(null); // handle memorise en attente de permission
+            // v2.2.0 : mode tout-serveur. `connected` remplace `rootHandle` ;
+            // l'alias `rootHandle` (truthy = serveur joignable) est conserve
+            // pour ne pas toucher les ~30 gardes JSX `rootHandle && ...`.
+            const [connected, setConnected] = useState(false);
+            const [connError, setConnError] = useState(false);
+            const rootHandle = connected;
             const [emails, setEmails] = useState([]);
             const [searchTerm, setSearchTerm] = useState("");
             const [selectedMail, setSelectedMail] = useState(null);
@@ -277,20 +228,10 @@
             // ========== CATEGORIZATION VIEW LOGIC (unchanged) ==========
 
             const loadAllCounts = async (handle) => {
-                const newCounts = {};
-                for (const subdir of SUBDIRS) {
-                    try {
-                        const todoDir = await handle.getDirectoryHandle('todo');
-                        const categoryDir = await todoDir.getDirectoryHandle(subdir.key);
-                        const fileHandle = await categoryDir.getFileHandle('pending_emails.json');
-                        const data = JSON.parse(await (await fileHandle.getFile()).text());
-                        const { emails } = extractEmailsAndMeta(data);
-                        newCounts[subdir.key] = emails.length;
-                    } catch (err) {
-                        newCounts[subdir.key] = 0;
-                    }
-                }
-                setCounts(newCounts);
+                try {
+                    const data = await api.categories();
+                    setCounts(data.counts || {});
+                } catch (_) { /* serveur injoignable : on garde l'etat courant */ }
             };
 
             // Garantit qu'une decision par defaut existe pour CHAQUE mail de
@@ -314,157 +255,61 @@
                 if (lockedNow) return; // ne pas ecrire pendant qu'un cycle Claude tourne
                 for (const subdir of SUBDIRS) {
                     try {
-                        const todoDir = await handle.getDirectoryHandle('todo');
-                        const categoryDir = await todoDir.getDirectoryHandle(subdir.key);
-                        // Lire pending_emails — skip si vide ou inexistant
-                        let pendingData;
-                        try {
-                            const pFh = await categoryDir.getFileHandle('pending_emails.json');
-                            pendingData = JSON.parse(await (await pFh.getFile()).text());
-                        } catch (_) { continue; }
-                        const { emails } = extractEmailsAndMeta(pendingData);
+                        const data = await api.categoryEmails(subdir.key);
+                        const emails = data.emails || [];
                         if (emails.length === 0) continue;
-
                         const defAction = subdir.key === 'trash' ? 'delete' : 'other';
-                        // Lire instructions.json existant (tolerant a l'absence)
                         const existingMap = {};
-                        try {
-                            const iFh = await categoryDir.getFileHandle('instructions.json');
-                            const iData = JSON.parse(await (await iFh.getFile()).text());
-                            const { instructions: list } = extractInstructionsAndMeta(iData);
-                            list.forEach(inst => {
-                                if (inst && inst.id) existingMap[inst.id] = inst.action;
-                            });
-                        } catch (_) { /* absent, on part de zero */ }
-
+                        (data.instructions || []).forEach(inst => {
+                            if (inst && inst.id) existingMap[inst.id] = inst.action;
+                        });
                         // Fusion : ajouter les mails manquants sans ecraser l'existant
                         let added = 0;
                         emails.forEach(e => {
-                            if (existingMap[e.id] == null) {
-                                existingMap[e.id] = defAction;
-                                added++;
-                            }
+                            if (existingMap[e.id] == null) { existingMap[e.id] = defAction; added++; }
                         });
                         if (added > 0) {
-                            await writeInstructions(handle, subdir.key, emails, existingMap);
+                            await writeInstructions(null, subdir.key, emails, existingMap);
                         }
-                    } catch (_) { /* categorie absente, skip */ }
+                    } catch (_) { /* categorie absente ou serveur indisponible, skip */ }
                 }
             };
 
-            const bootstrapHandle = async (handle) => {
-                setRootHandle(handle);
-                setPendingHandle(null);
-                loadSubdirEmails(handle, activeSubdir);
-                loadAllCounts(handle);
-                loadTaskCounts(handle);
-                // Lire le state de maniere synchrone pour connaitre le lock
-                // actuel avant d'appeler ensureAllInstructions (evite la
-                // closure stale decrite plus bas).
-                const initialState = await readWorkspaceState(handle);
-                if (initialState) setWorkspaceState(initialState);
-                readInvalidateStamp(handle).then(st => st && setInvalidateStamp(st));
-                // Ecrit les instructions.json par defaut pour toutes les categories
-                // non vides qui n'en ont pas — process-todo doit pouvoir traiter
-                // les mails meme sans interaction utilisateur dans le dashboard.
-                ensureAllInstructions(handle, {
-                    lockedNow: !!(initialState && initialState.active_lock),
-                });
-                await saveHandle(handle);
-            };
-
-            const connectFolder = async () => {
-                if (!browserSupported) return;
+            // Bootstrap au montage : on interroge le serveur. S'il repond, on
+            // est connecte et on charge les donnees initiales ; sinon on affiche
+            // l'ecran « serveur injoignable ».
+            const bootstrap = async () => {
                 try {
-                    // En mode file://, startIn avec un handle d'une origine
-                    // precedente fait planter le picker (ne resout jamais).
-                    // On omet donc startIn — l'utilisateur navigue depuis le
-                    // dossier par defaut.
-                    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-                    await bootstrapHandle(handle);
-                } catch (err) {
-                    if (err && err.name !== 'AbortError') console.error(err);
+                    const d = await api.poll();
+                    setConnected(true);
+                    if (d.state) setWorkspaceState(d.state);
+                    if (d.invalidate_stamp) setInvalidateStamp(d.invalidate_stamp);
+                    await Promise.all([
+                        loadSubdirEmails(null, activeSubdir),
+                        loadAllCounts(null),
+                        loadTaskCounts(null),
+                    ]);
+                    // Decisions par defaut pour toutes les categories non vides
+                    // sans instructions — process-todo doit pouvoir traiter les
+                    // mails meme sans interaction dans le dashboard.
+                    ensureAllInstructions(null, {
+                        lockedNow: !!(d.state && d.state.active_lock),
+                    });
+                } catch (_) {
+                    setConnError(true);
                 }
             };
 
-            const reconnectPending = async () => {
-                console.log('[todomail] reconnectPending START, pendingHandle?', !!pendingHandle);
-                if (!pendingHandle) return;
-                // En mode file://, chaque chargement de page est une origine
-                // unique. Donc `startIn: pendingHandle` (handle issu d'IndexedDB
-                // d'une origine precedente) cause un picker qui ouvre puis ne
-                // resout jamais (bug constate via DevTools). On l'omet pour
-                // garantir que le picker fonctionne correctement.
-                let handle;
-                try {
-                    console.log('[todomail] calling showDirectoryPicker (no startIn)...');
-                    handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-                    console.log('[todomail] picker resolved with handle:', handle && handle.name);
-                } catch (err) {
-                    console.warn('[todomail] picker threw:', err && err.name, err && err.message);
-                    return;
-                }
-                if (!handle) {
-                    console.warn('[todomail] picker returned no handle');
-                    return;
-                }
-                try {
-                    console.log('[todomail] calling bootstrapHandle...');
-                    await bootstrapHandle(handle);
-                    console.log('[todomail] bootstrapHandle done');
-                } catch (err) {
-                    console.error('[todomail] bootstrapHandle failed:', err);
-                }
-            };
-
-            const forgetWorkspace = async () => {
-                await clearHandle();
-                setPendingHandle(null);
-                setRootHandle(null);
-            };
-
-            // Reconnexion automatique au mount : lit IndexedDB. Si la permission
-            // est encore active (Chromium peut la memoriser apres un reload),
-            // un test silencieux d'acces fonctionne et on rebranche sans clic.
-            // Sinon on bascule sur le bouton « Reprendre la connexion ».
-            // On evite deliberement queryPermission/requestPermission qui se
-            // comportent mal sur les handles persistes (cf. fallback picker
-            // dans reconnectPending).
-            useEffect(() => {
-                if (!browserSupported) { setReconnecting(false); return; }
-                (async () => {
-                    try {
-                        const stored = await loadHandle();
-                        if (!stored) { setReconnecting(false); return; }
-                        // Test silencieux d'acces : tenter de lister une entree.
-                        // Si la permission est encore granted, ca passe sans dialog.
-                        // Sinon, ca jette et on attend le clic utilisateur.
-                        try {
-                            // eslint-disable-next-line no-unused-vars
-                            for await (const _entry of stored.values()) break;
-                            console.log('[todomail] auto-reconnect OK (silent access)');
-                            await bootstrapHandle(stored);
-                        } catch (_) {
-                            console.log('[todomail] silent access denied, waiting for user click');
-                            setPendingHandle(stored);
-                        }
-                    } catch (e) { console.warn('[todomail] reconnect mount failed:', e); }
-                    setReconnecting(false);
-                })();
-            }, [browserSupported]);
+            useEffect(() => { bootstrap(); }, []);
 
             const writeInstructions = async (handle, subdirKey, emailsList, decisionsMap) => {
                 try {
                     const defAction = subdirKey === 'trash' ? 'delete' : 'other';
-                    const todoDir = await handle.getDirectoryHandle('todo');
-                    const categoryDir = await todoDir.getDirectoryHandle(subdirKey);
                     const result = emailsList.map(e => ({ id: e.id, action: decisionsMap[e.id] || defAction }));
-                    const fh = await categoryDir.getFileHandle('instructions.json', { create: true });
-                    const writable = await fh.createWritable();
-                    await writable.write(JSON.stringify(result, null, 2));
-                    await writable.close();
+                    await api.putInstructions(subdirKey, result);
                     showToast('saved');
                 } catch (err) {
+                    if (err && err.locked) return; // cycle Claude en cours : ignore silencieux
                     console.error('Erreur écriture instructions.json:', err);
                     showToast('error');
                 }
@@ -473,13 +318,10 @@
             const loadSubdirEmails = async (handle, subdirKey, options = {}) => {
                 const { preserveUi = false } = options;
                 try {
-                    const todoDir = await handle.getDirectoryHandle('todo');
-                    const categoryDir = await todoDir.getDirectoryHandle(subdirKey);
-                    const fileHandle = await categoryDir.getFileHandle('pending_emails.json');
-                    const data = JSON.parse(await (await fileHandle.getFile()).text());
-                    const { emails, meta } = extractEmailsAndMeta(data);
+                    const data = await api.categoryEmails(subdirKey);
+                    const emails = data.emails || [];
                     setEmails(emails);
-                    setPendingMeta(meta);
+                    setPendingMeta(data.pending_meta || null);
                     if (!preserveUi) {
                         setSearchTerm("");
                         setExpandedCard(null);
@@ -487,31 +329,22 @@
                     setCounts(prev => ({ ...prev, [subdirKey]: emails.length }));
 
                     const defAction = subdirKey === 'trash' ? 'delete' : 'other';
-                    let loadedDecisions = {};
-                    let loadedInstrMeta = null;
-                    try {
-                        const instrFile = await categoryDir.getFileHandle('instructions.json');
-                        const instrData = JSON.parse(await (await instrFile.getFile()).text());
-                        const { instructions: instrList, meta: instrMeta } = extractInstructionsAndMeta(instrData);
-                        loadedInstrMeta = instrMeta;
-                        if (instrList.length > 0) {
-                            instrList.forEach(instr => { loadedDecisions[instr.id] = instr.action; });
-                        }
-                    } catch (_) {}
+                    const loadedDecisions = {};
+                    const instrList = data.instructions || [];
+                    const loadedInstrMeta = data.instructions_meta || null;
+                    instrList.forEach(instr => { if (instr && instr.id) loadedDecisions[instr.id] = instr.action; });
                     setInstructionsMeta(loadedInstrMeta);
                     const hadInstructionsFile = Object.keys(loadedDecisions).length > 0 || loadedInstrMeta !== null;
                     emails.forEach(e => {
                         if (!loadedDecisions[e.id]) loadedDecisions[e.id] = defAction;
                     });
                     setDecisions(loadedDecisions);
-                    // Phase 5 : ecriture initiale conditionnelle. On n'ecrit
-                    // les decisions par defaut que si le fichier est absent (ou
-                    // vide) — pour que /process-todo ait quelque chose a traiter
-                    // meme si l'utilisateur ne touche a rien. Si un instructions.json
-                    // existe deja (ecrit par un cycle precedent ou par Claude),
-                    // on ne l'ecrase pas.
+                    // Ecriture initiale conditionnelle : on n'ecrit les decisions
+                    // par defaut que si aucun instructions.json n'existe — pour que
+                    // /process-todo ait quelque chose a traiter meme sans
+                    // interaction. Si un fichier existe deja, on ne l'ecrase pas.
                     if (!hadInstructionsFile && emails.length > 0 && !isLocked) {
-                        writeInstructions(handle, subdirKey, emails, loadedDecisions);
+                        writeInstructions(null, subdirKey, emails, loadedDecisions);
                     }
                 } catch (err) {
                     setEmails([]);
@@ -535,36 +368,14 @@
 
             // ========== PHASE 5 — Polling 3s sur .todomail/state.json + .todomail/invalidate.txt ==========
 
-            const getRuntimeDir = async (handle) => {
+            // Un seul appel consolide remplace les deux lectures fichier (state +
+            // invalidate). Tolerant aux pannes : renvoie des null sans jeter.
+            const pollOnce = async () => {
                 try {
-                    return await handle.getDirectoryHandle('.todomail');
+                    const d = await api.poll();
+                    return { stamp: d.invalidate_stamp, state: d.state };
                 } catch (_) {
-                    return null;
-                }
-            };
-
-            const readWorkspaceState = async (handle) => {
-                try {
-                    const rt = await getRuntimeDir(handle);
-                    if (!rt) return null;
-                    const fh = await rt.getFileHandle('state.json');
-                    const file = await fh.getFile();
-                    const content = await file.text();
-                    return JSON.parse(content);
-                } catch (_) {
-                    return null;
-                }
-            };
-
-            const readInvalidateStamp = async (handle) => {
-                try {
-                    const rt = await getRuntimeDir(handle);
-                    if (!rt) return null;
-                    const fh = await rt.getFileHandle('invalidate.txt');
-                    const file = await fh.getFile();
-                    return file.lastModified;
-                } catch (_) {
-                    return null;
+                    return { stamp: null, state: null };
                 }
             };
 
@@ -596,10 +407,7 @@
 
                 const tick = async () => {
                     if (cancelled) return;
-                    const [stamp, state] = await Promise.all([
-                        readInvalidateStamp(rootHandle),
-                        readWorkspaceState(rootHandle),
-                    ]);
+                    const { stamp, state } = await pollOnce();
                     if (cancelled) return;
 
                     const newSessionId = state && state.session_id ? state.session_id : null;
@@ -637,31 +445,19 @@
 
             // ========== PHASE 5 — Fichiers-marqueurs retry / dismiss ==========
 
-            const writeMarkerFile = async (filename, lines) => {
-                if (!rootHandle) return false;
-                try {
-                    const rt = await rootHandle.getDirectoryHandle('.todomail', { create: true });
-                    const fh = await rt.getFileHandle(filename, { create: true });
-                    const writable = await fh.createWritable();
-                    const content = lines.length ? lines.join('\n') + '\n' : '';
-                    await writable.write(content);
-                    await writable.close();
-                    return true;
-                } catch (err) {
-                    console.error(`Erreur ecriture .todomail/${filename}:`, err);
-                    return false;
-                }
-            };
-
             const requestRetryAll = async () => {
-                const ok = await writeMarkerFile('retry_request.txt', displayedErrors.map(e => e.mail_id));
-                showToast(ok ? 'saved' : 'error');
+                try {
+                    await api.markerRetry(displayedErrors.map(e => e.mail_id));
+                    showToast('saved');
+                } catch (_) { showToast('error'); }
             };
 
             const dismissError = async (mailId) => {
                 setDismissedIds(prev => new Set([...prev, mailId]));
-                const ok = await writeMarkerFile('errors_dismiss.txt', [mailId]);
-                showToast(ok ? 'saved' : 'error');
+                try {
+                    await api.markerDismiss(mailId);
+                    showToast('saved');
+                } catch (_) { showToast('error'); }
             };
 
             // ========== PHASE 5 — Vue Memoire ==========
@@ -674,48 +470,16 @@
             ];
 
             const loadMemoryCounts = async (handle) => {
-                const mc = { claude: 0, people: 0, projects: 0, context: 0 };
-                try { await handle.getFileHandle('CLAUDE.md'); mc.claude = 1; } catch (_) {}
-                for (const sub of ['people', 'projects', 'context']) {
-                    try {
-                        const memDir = await handle.getDirectoryHandle('memory');
-                        const dir = await memDir.getDirectoryHandle(sub);
-                        let n = 0;
-                        for await (const entry of dir.values()) {
-                            if (entry.kind === 'file' && entry.name.endsWith('.md')) n++;
-                        }
-                        mc[sub] = n;
-                    } catch (_) {}
-                }
-                setMemoryCounts(mc);
+                try {
+                    const data = await api.memoryCounts();
+                    setMemoryCounts(data.counts || { claude: 0, people: 0, projects: 0, context: 0 });
+                } catch (_) {}
             };
 
             const loadMemorySection = async (handle, sectionKey) => {
-                if (sectionKey === 'claude') {
-                    try {
-                        const fh = await handle.getFileHandle('CLAUDE.md');
-                        const file = await fh.getFile();
-                        const content = await file.text();
-                        setMemoryFiles([{ name: 'CLAUDE.md', path: 'CLAUDE.md', content }]);
-                        setMemoryCounts(prev => ({ ...prev, claude: 1 }));
-                    } catch (_) {
-                        setMemoryFiles([]);
-                        setMemoryCounts(prev => ({ ...prev, claude: 0 }));
-                    }
-                    return;
-                }
                 try {
-                    const memDir = await handle.getDirectoryHandle('memory');
-                    const dir = await memDir.getDirectoryHandle(sectionKey);
-                    const files = [];
-                    for await (const entry of dir.values()) {
-                        if (entry.kind === 'file' && entry.name.endsWith('.md')) {
-                            const file = await entry.getFile();
-                            const content = await file.text();
-                            files.push({ name: entry.name, path: `memory/${sectionKey}/${entry.name}`, content });
-                        }
-                    }
-                    files.sort((a, b) => a.name.localeCompare(b.name));
+                    const data = await api.memoryGet(sectionKey);
+                    const files = data.files || [];
                     setMemoryFiles(files);
                     setMemoryCounts(prev => ({ ...prev, [sectionKey]: files.length }));
                 } catch (_) {
@@ -734,20 +498,9 @@
             const saveMemoryFile = async () => {
                 if (!editModal || editModal.type !== 'memory') return;
                 try {
-                    if (editModal.section === 'claude') {
-                        const fh = await rootHandle.getFileHandle('CLAUDE.md', { create: true });
-                        const writable = await fh.createWritable();
-                        await writable.write(editModal.content);
-                        await writable.close();
-                    } else {
-                        const memDir = await rootHandle.getDirectoryHandle('memory');
-                        const dir = await memDir.getDirectoryHandle(editModal.section);
-                        const fh = await dir.getFileHandle(editModal.key, { create: true });
-                        const writable = await fh.createWritable();
-                        await writable.write(editModal.content);
-                        await writable.close();
-                    }
-                    await loadMemorySection(rootHandle, editModal.section);
+                    const name = editModal.section === 'claude' ? 'CLAUDE.md' : editModal.key;
+                    await api.memoryPut(editModal.section, name, editModal.content);
+                    await loadMemorySection(null, editModal.section);
                     showToast('saved');
                 } catch (err) {
                     console.error(err);
@@ -759,10 +512,8 @@
             const removeMemoryFile = async (sectionKey, filename) => {
                 try {
                     if (sectionKey === 'claude') return;
-                    const memDir = await rootHandle.getDirectoryHandle('memory');
-                    const dir = await memDir.getDirectoryHandle(sectionKey);
-                    await dir.removeEntry(filename);
-                    await loadMemorySection(rootHandle, sectionKey);
+                    await api.memoryDelete(sectionKey, filename);
+                    await loadMemorySection(null, sectionKey);
                     showToast('saved');
                 } catch (err) {
                     console.error(err);
@@ -803,32 +554,14 @@
                 });
             }, [emails, searchTerm, activeSubdir]);
 
-            const openAttachment = async (id, fileName) => {
-                try {
-                    const todoDir = await rootHandle.getDirectoryHandle('todo');
-                    const categoryDir = await todoDir.getDirectoryHandle(activeSubdir);
-                    const mailDir = await categoryDir.getDirectoryHandle(id);
-                    const fileHandle = await mailDir.getFileHandle(fileName);
-                    const file = await fileHandle.getFile();
-                    const url = URL.createObjectURL(file);
-                    window.open(url, '_blank');
-                } catch (err) { alert("Impossible d'ouvrir le fichier."); }
+            const openAttachment = (id, fileName) => {
+                window.open(api.mailFileUrl(activeSubdir, id, fileName), '_blank');
             };
 
             const openMailDetails = async (id) => {
                 try {
-                    const todoDir = await rootHandle.getDirectoryHandle('todo');
-                    const categoryDir = await todoDir.getDirectoryHandle(activeSubdir);
-                    const mailDir = await categoryDir.getDirectoryHandle(id);
-                    const jsonFile = await mailDir.getFileHandle('message.json');
-                    const detailData = JSON.parse(await (await jsonFile.getFile()).text());
-                    const attachments = [];
-                    for await (const entry of mailDir.values()) {
-                        if (entry.kind === 'file' && !entry.name.endsWith('.json') && !entry.name.endsWith('.eml')) {
-                            attachments.push(entry.name);
-                        }
-                    }
-                    setSelectedMail({ ...detailData, id, attachments });
+                    const data = await api.mail(activeSubdir, id);
+                    setSelectedMail({ ...data.mail, id, attachments: data.attachments || [] });
                 } catch (err) { console.error(err); }
             };
 
@@ -865,32 +598,16 @@
             // ========== TASKS VIEW LOGIC ==========
 
             const loadTaskCounts = async (handle) => {
-                const tc = { consult: 0, "to-send": 0, "to-work": 0 };
                 try {
-                    const fh = await handle.getFileHandle('consult.md');
-                    const content = await (await fh.getFile()).text();
-                    tc.consult = parseConsultMd(content).length;
+                    const data = await api.tasksCounts();
+                    setTaskCounts(data.counts || { consult: 0, "to-send": 0, "to-work": 0 });
                 } catch (_) {}
-                try {
-                    const dir = await handle.getDirectoryHandle('to-send');
-                    for await (const entry of dir.values()) {
-                        if (entry.kind === 'file' && entry.name.endsWith('.md')) tc["to-send"]++;
-                    }
-                } catch (_) {}
-                try {
-                    const dir = await handle.getDirectoryHandle('to-work');
-                    for await (const entry of dir.values()) {
-                        if (entry.kind === 'directory') tc["to-work"]++;
-                    }
-                } catch (_) {}
-                setTaskCounts(tc);
             };
 
             const loadConsultEntries = async (handle) => {
                 try {
-                    const fh = await handle.getFileHandle('consult.md');
-                    const content = await (await fh.getFile()).text();
-                    const entries = parseConsultMd(content);
+                    const data = await api.consultGet();
+                    const entries = parseConsultMd(data.content || '');
                     setConsultEntries(entries);
                     setTaskCounts(prev => ({ ...prev, consult: entries.length }));
                 } catch (_) {
@@ -901,26 +618,21 @@
 
             const loadToSendFiles = async (handle) => {
                 try {
-                    const dir = await handle.getDirectoryHandle('to-send');
-                    const files = [];
-                    for await (const entry of dir.values()) {
-                        if (entry.kind === 'file' && entry.name.endsWith('.md')) {
-                            const file = await entry.getFile();
-                            const content = await file.text();
-                            const { meta, body } = parseFrontmatter(content);
-                            files.push({
-                                filename: entry.name,
-                                recipient: recipientFromFilename(entry.name),
-                                to: meta.to || '',
-                                cc: meta.cc || '',
-                                subject: meta.subject || '',
-                                date: meta.date || '',
-                                refMailId: meta.ref_mail_id || '',
-                                body: body.trim(),
-                                rawContent: content
-                            });
-                        }
-                    }
+                    const data = await api.toSendGet();
+                    const files = (data.files || []).map(f => {
+                        const { meta, body } = parseFrontmatter(f.content);
+                        return {
+                            filename: f.filename,
+                            recipient: recipientFromFilename(f.filename),
+                            to: meta.to || '',
+                            cc: meta.cc || '',
+                            subject: meta.subject || '',
+                            date: meta.date || '',
+                            refMailId: meta.ref_mail_id || '',
+                            body: body.trim(),
+                            rawContent: f.content
+                        };
+                    });
                     files.sort((a, b) => a.filename.localeCompare(b.filename));
                     setToSendFiles(files);
                     setTaskCounts(prev => ({ ...prev, "to-send": files.length }));
@@ -932,31 +644,13 @@
 
             const loadToWorkTasks = async (handle) => {
                 try {
-                    const dir = await handle.getDirectoryHandle('to-work');
-                    const tasks = [];
-                    for await (const entry of dir.values()) {
-                        if (entry.kind === 'directory') {
-                            let checklistContent = '';
-                            const documents = [];
-                            const taskDir = await dir.getDirectoryHandle(entry.name);
-                            for await (const fileEntry of taskDir.values()) {
-                                if (fileEntry.kind === 'file') {
-                                    if (fileEntry.name === 'checklist.md') {
-                                        const f = await fileEntry.getFile();
-                                        checklistContent = await f.text();
-                                    } else {
-                                        documents.push(fileEntry.name);
-                                    }
-                                }
-                            }
-                            tasks.push({
-                                dirName: entry.name,
-                                label: entry.name.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
-                                checklist: checklistContent,
-                                documents: documents.sort()
-                            });
-                        }
-                    }
+                    const data = await api.toWorkGet();
+                    const tasks = (data.tasks || []).map(t => ({
+                        dirName: t.dirName,
+                        label: t.dirName.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+                        checklist: t.checklist || '',
+                        documents: (t.documents || []).slice().sort()
+                    }));
                     tasks.sort((a, b) => a.dirName.localeCompare(b.dirName));
                     setToWorkTasks(tasks);
                     setTaskCounts(prev => ({ ...prev, "to-work": tasks.length }));
@@ -987,10 +681,7 @@
             const removeConsultEntry = async (entryId) => {
                 const remaining = consultEntries.filter(e => e.id !== entryId);
                 try {
-                    const fh = await rootHandle.getFileHandle('consult.md', { create: true });
-                    const writable = await fh.createWritable();
-                    await writable.write(buildConsultMd(remaining));
-                    await writable.close();
+                    await api.consultPut(buildConsultMd(remaining));
                     setConsultEntries(remaining);
                     setTaskCounts(prev => ({ ...prev, consult: remaining.length }));
                     showToast('saved');
@@ -1003,8 +694,7 @@
 
             const removeToSendFile = async (filename) => {
                 try {
-                    const dir = await rootHandle.getDirectoryHandle('to-send');
-                    await dir.removeEntry(filename);
+                    await api.toSendDelete(filename);
                     const remaining = toSendFiles.filter(f => f.filename !== filename);
                     setToSendFiles(remaining);
                     setTaskCounts(prev => ({ ...prev, "to-send": remaining.length }));
@@ -1018,8 +708,7 @@
 
             const removeToWorkTask = async (dirName) => {
                 try {
-                    const dir = await rootHandle.getDirectoryHandle('to-work');
-                    await removeDirectoryRecursive(dir, dirName);
+                    await api.toWorkDelete(dirName);
                     const remaining = toWorkTasks.filter(t => t.dirName !== dirName);
                     setToWorkTasks(remaining);
                     setTaskCounts(prev => ({ ...prev, "to-work": remaining.length }));
@@ -1039,20 +728,11 @@
                 }
                 try {
                     if (editModal.type === 'to-send') {
-                        const dir = await rootHandle.getDirectoryHandle('to-send');
-                        const fh = await dir.getFileHandle(editModal.key, { create: true });
-                        const writable = await fh.createWritable();
-                        await writable.write(editModal.content);
-                        await writable.close();
-                        await loadToSendFiles(rootHandle);
+                        await api.toSendPut(editModal.key, editModal.content);
+                        await loadToSendFiles(null);
                     } else if (editModal.type === 'to-work') {
-                        const dir = await rootHandle.getDirectoryHandle('to-work');
-                        const taskDir = await dir.getDirectoryHandle(editModal.key);
-                        const fh = await taskDir.getFileHandle('checklist.md', { create: true });
-                        const writable = await fh.createWritable();
-                        await writable.write(editModal.content);
-                        await writable.close();
-                        await loadToWorkTasks(rootHandle);
+                        await api.toWorkChecklistPut(editModal.key, editModal.content);
+                        await loadToWorkTasks(null);
                     }
                     showToast('saved');
                 } catch (err) {
@@ -1070,15 +750,8 @@
                 } catch (err) { console.error(err); }
             };
 
-            const openToWorkFile = async (dirName, fileName) => {
-                try {
-                    const dir = await rootHandle.getDirectoryHandle('to-work');
-                    const taskDir = await dir.getDirectoryHandle(dirName);
-                    const fileHandle = await taskDir.getFileHandle(fileName);
-                    const file = await fileHandle.getFile();
-                    const url = URL.createObjectURL(file);
-                    window.open(url, '_blank');
-                } catch (err) { alert("Impossible d'ouvrir le fichier."); }
+            const openToWorkFile = (dirName, fileName) => {
+                window.open(api.toWorkFileUrl(dirName, fileName), '_blank');
             };
 
             // Filtered task data
@@ -1152,47 +825,31 @@
                 return 'file';
             };
 
-            // Ecran plein page : navigateur sans File System Access API
-            if (!browserSupported) {
+            // Ecran : connexion au serveur en cours, ou serveur injoignable.
+            // (Plus de garde Chromium ni de picker : le dashboard est servi par
+            // lib/serve_dashboard.py et marche dans tout navigateur.)
+            if (!rootHandle) {
                 return (
                     <div className="min-h-screen flex items-center justify-center p-8 bg-slate-50 dark:bg-darkBg">
-                        <div className="max-w-xl bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-3xl shadow-xl p-8 animate-slide-up">
-                            <div className="inline-flex items-center justify-center w-14 h-14 bg-red-100 dark:bg-red-900/30 text-red-600 rounded-2xl mb-4">
-                                <Icon name="alert-octagon" size={28} />
+                        {connError ? (
+                            <div className="max-w-md bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-3xl shadow-xl p-8 animate-slide-up text-center">
+                                <div className="inline-flex items-center justify-center w-14 h-14 bg-red-100 dark:bg-red-900/30 text-red-600 rounded-2xl mb-4">
+                                    <Icon name="server-off" size={28} />
+                                </div>
+                                <h1 className="text-xl font-black mb-2">Serveur injoignable</h1>
+                                <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
+                                    Le dashboard est servi par un serveur local. Lance-le depuis Claude Code avec <code className="font-mono text-xs bg-slate-100 dark:bg-slate-800 px-1 rounded">/todomail:dashboard</code>, puis recharge cette page.
+                                </p>
+                                <button onClick={() => { setConnError(false); bootstrap(); }} className="bg-blue-600 text-white px-5 py-2 rounded-xl font-bold text-sm hover:bg-blue-700 transition-all inline-flex items-center gap-2">
+                                    <Icon name="refresh-cw" size={14} /> Réessayer
+                                </button>
                             </div>
-                            <h1 className="text-xl font-black mb-2">Navigateur non supporté</h1>
-                            <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
-                                Ce dashboard utilise l'API <code className="font-mono text-xs bg-slate-100 dark:bg-slate-800 px-1 rounded">File System Access</code> pour lire et écrire dans ton dossier de travail. Cette API n'est disponible que dans les navigateurs Chromium.
-                            </p>
-                            <div className="bg-slate-50 dark:bg-slate-900 rounded-xl p-4 text-sm">
-                                <div className="font-bold text-emerald-600 mb-2 flex items-center gap-2"><Icon name="check-circle" size={14} /> Navigateurs supportés</div>
-                                <ul className="text-slate-600 dark:text-slate-300 space-y-1 text-xs pl-6 list-disc">
-                                    <li>Google Chrome, Microsoft Edge, Arc</li>
-                                    <li>DIA (dérivé Chromium)</li>
-                                    <li>Opera, Brave, Vivaldi (Chromium)</li>
-                                </ul>
-                                <div className="font-bold text-red-600 mt-4 mb-2 flex items-center gap-2"><Icon name="x-circle" size={14} /> Navigateurs non supportés</div>
-                                <ul className="text-slate-600 dark:text-slate-300 space-y-1 text-xs pl-6 list-disc">
-                                    <li>Safari, Orion (WebKit — Apple refuse l'API)</li>
-                                    <li>Firefox</li>
-                                </ul>
+                        ) : (
+                            <div className="inline-flex items-center gap-3 text-slate-500">
+                                <Icon name="loader" size={20} className="animate-spin" />
+                                <span className="text-sm font-medium">Connexion au serveur…</span>
                             </div>
-                            <p className="text-xs text-slate-500 mt-4">
-                                Ouvre ce fichier dans un navigateur Chromium pour utiliser le dashboard. Un mode compatible universel (micro-serveur local) est envisagé pour une future version.
-                            </p>
-                        </div>
-                    </div>
-                );
-            }
-
-            // Ecran transitoire : tentative de reconnexion au handle persiste
-            if (reconnecting && !rootHandle) {
-                return (
-                    <div className="min-h-screen flex items-center justify-center">
-                        <div className="inline-flex items-center gap-3 text-slate-500">
-                            <Icon name="loader" size={20} className="animate-spin" />
-                            <span className="text-sm font-medium">Reconnexion au projet…</span>
-                        </div>
+                        )}
                     </div>
                 );
             }
@@ -1241,28 +898,9 @@
                             <button onClick={() => setIsDark(!isDark)} className="p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">
                                 <Icon name={isDark ? "sun" : "moon"} />
                             </button>
-                            {!browserSupported ? (
-                                <span className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-4 py-2 rounded-xl font-bold text-sm">
-                                    Navigateur non supporté
-                                </span>
-                            ) : rootHandle ? (
-                                <div className="flex items-center gap-2">
-                                    <span className="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 px-4 py-2 rounded-xl font-bold text-sm inline-flex items-center gap-2">
-                                        <Icon name="link" size={14} /> Projet connecté
-                                    </span>
-                                    <button onClick={forgetWorkspace} className="p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400 hover:text-red-500 transition-colors" title="Oublier ce projet (sera redemandé au prochain chargement)">
-                                        <Icon name="unlink" size={16} />
-                                    </button>
-                                </div>
-                            ) : pendingHandle ? (
-                                <button onClick={reconnectPending} className="bg-blue-600 text-white px-5 py-2 rounded-xl font-bold text-sm hover:scale-105 transition-all inline-flex items-center gap-2">
-                                    <Icon name="refresh-cw" size={14} /> Reprendre la connexion
-                                </button>
-                            ) : (
-                                <button onClick={connectFolder} className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-5 py-2 rounded-xl font-bold text-sm hover:scale-105 transition-all">
-                                    Ouvrir Projet
-                                </button>
-                            )}
+                            <span className="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 px-4 py-2 rounded-xl font-bold text-sm inline-flex items-center gap-2">
+                                <Icon name="link" size={14} /> Connecté
+                            </span>
                         </div>
                     </nav>
 

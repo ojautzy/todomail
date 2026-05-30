@@ -23,6 +23,7 @@ Principe : si Claude doit pouvoir utiliser une capacité de sa propre initiative
 | Commande | Description |
 |----------|-------------|
 | `/start` | Initialise le système todomail, crée les répertoires, place le dashboard et bootstrap la mémoire de travail |
+| `/dashboard` | Lance le serveur du dashboard (Safari, Firefox, mobile) et l'expose via Cloudflare Access. Voir `CLOUDFLARE-DASHBOARD.md` |
 | `/check-inbox` | Télécharge les mails et les trie dans les catégories d'action (flags `--strict`, `--retry`) |
 | `/process-todo` | Exécution des instructions du dashboard : archivage, classement des pièces jointes, rédaction de projets d'arbitrage, transmission, préparation de livrables (flags `--strict`, `--retry`, `--batch-validate`) |
 | `/briefing` | Génère des dossiers de préparation pour les réunions (déposés dans `to-brief/`). Flag `--parallel` pour fan-out Task au-delà de 5 réunions. |
@@ -63,15 +64,16 @@ Le fichier `dashboard.html` (copié à la racine du répertoire de travail par `
 - **Catégorisation** : navigation entre les catégories de mails triés, consultation des synthèses et ajustement des actions. Les fichiers `instructions.json` sont générés et mis à jour automatiquement (valeurs par défaut : SUPPRIMER pour la Corbeille, TRAITER pour les autres catégories).
 - **Tâches** : gestionnaire de tâches en 3 sections — suivi des consultations en cours (`consult.md`), mails à envoyer (`to-send/`), et travail à faire (`to-work/`). Chaque section offre aperçu, édition, copie presse-papier et suppression avec confirmation inline.
 
-Le dashboard dispose d'un menu de navigation extensible (Catégorisation, Mémoire, Tâches). Il fonctionne sans serveur backend via l'API File System Access. Voir `README.dashboard.md` pour la documentation technique complète.
+Le dashboard dispose d'un menu de navigation extensible (Catégorisation, Mémoire, Tâches). Depuis la v2.2.0, il est servi par un **serveur HTTP local** (`lib/serve_dashboard.py`) et dialogue avec lui via une API JSON. Voir `README.dashboard.md` pour la documentation technique complète.
 
-### Navigateurs supportés
+### Accès et navigateurs (v2.2.0)
 
-Le dashboard **nécessite un navigateur basé sur Chromium** (Chrome, Edge, Arc, DIA, Brave, Opera, Vivaldi). L'API File System Access, indispensable pour lire et écrire les fichiers du workspace sans backend, n'est pas disponible dans Safari, Orion (WebKit) ni Firefox.
+Le dashboard fonctionne désormais dans **tout navigateur** — Chrome, Edge, Arc, Brave, **Safari, Firefox, et les navigateurs mobiles** : plus de restriction Chromium, plus de sélecteur de dossier, plus de ré-autorisation (la File System Access API n'est plus utilisée).
 
-Si vous ouvrez `dashboard.html` dans un navigateur non supporté, un écran d'avertissement plein page s'affiche avec la liste des navigateurs compatibles.
-
-Un mode serveur HTTP local compatible avec tous les navigateurs modernes (Safari, Orion, Firefox inclus) est planifié en Phase 7 du refactoring (v2.1.x). Voir `REFACTOR_PLAN.md` section Phase 7 pour le détail.
+- **Démarrage** : commande `/todomail:dashboard` (lance le serveur en arrière-plan).
+- **Accès** : `https://<hostname>` (ex. `https://todomail.jautzy.com`) via le tunnel Cloudflare existant, depuis n'importe où, au Mac comme à distance.
+- **Sécurité** : forte, mono-utilisateur — **Cloudflare Access** (code à usage unique par email) au edge + validation JWT côté serveur + bind loopback. Un accès direct au port local renvoie `403`.
+- **Mise en service** initiale du tunnel + Access : voir `CLOUDFLARE-DASHBOARD.md`.
 
 ## Catégories de tri
 
@@ -106,6 +108,7 @@ todomail/
 │   └── plugin.json
 ├── commands/
 │   ├── start.md
+│   ├── dashboard.md             ← nouveau en v2.2.0 (serveur dashboard + Cloudflare Access)
 │   ├── check-inbox.md
 │   ├── process-todo.md
 │   ├── briefing.md
@@ -139,14 +142,16 @@ todomail/
 │   ├── inject_context.py
 │   ├── pre_compact.py
 │   └── README.md
-├── lib/                         ← 5 helpers Python (Phases 1–5)
+├── lib/                         ← helpers Python
 │   ├── state.py                 ← state.json persistant + verrous + erreurs
 │   ├── fs_utils.py              ← operations fichiers idempotentes + JSON v2
 │   ├── rag_cache.py             ← cache RAG en memoire de session
 │   ├── error_modes.py           ← strategie d'erreur (lenient/strict/resume)
-│   ├── config.py                ← .todomail-config.json (desambiguation MCP alpha.2)
+│   ├── config.py                ← .todomail-config.json (MCP + bloc dashboard v2.2.0)
+│   ├── serve_dashboard.py       ← nouveau en v2.2.0 (serveur HTTP du dashboard)
 │   └── README.md
 ├── CONNECTORS.md
+├── CLOUDFLARE-DASHBOARD.md      ← nouveau en v2.2.0 (mise en service tunnel + Access)
 ├── README.md
 └── README.dashboard.md
 ```
@@ -251,7 +256,7 @@ La v2.0.0 apporte des ruptures importantes par rapport à la v1.x. Les utilisate
 - **Agents supprimés** : `mail-analyzer` (Phase 2) et `todo-processor` (Phase 3) ont été supprimés. La logique est intégrée dans le contexte principal Opus 4.6 1M. L'agent `mail-prefilter` (Haiku 4.5) est conservé pour le pré-filtrage.
 - **Nouveau schéma JSON v2** : `pending_emails.json` et `instructions.json` sont désormais des objets wrappés `{_meta, emails}` / `{_meta, instructions}`. La rétrocompatibilité en lecture (v1 = tableau brut, v2 = wrapper) est assurée par `lib/fs_utils.read_v2_json` côté Python et par `extractEmails(data)` / `extractInstructionsAndMeta(data)` côté dashboard.
 - **Runtime du plugin dans `.todomail/`** : tout l'état runtime pour un workspace vit dans `$CLAUDE_PROJECT_DIR/.todomail/` (state.json, memory_cache.json, invalidate.txt, hooks.log…). Plus de mirror à la racine du workspace.
-- **Dashboard Chromium only** : le dashboard v3 nécessite un navigateur basé sur Chromium (Chrome, Edge, Arc, DIA, Brave, Opera, Vivaldi). Safari, Orion, Firefox affichent un écran d'avertissement. Le mode serveur HTTP local (Phase 7) résoudra cette limite en v2.1.x.
+- **Dashboard Chromium only** (v2.0 → v2.1) : le dashboard nécessitait un navigateur Chromium (File System Access API). **Levé en v2.2.0** : le dashboard est désormais servi par un serveur HTTP local et fonctionne dans tout navigateur (Safari, Firefox, mobile) — voir le guide de migration v2.2.0 ci-dessous et `CLOUDFLARE-DASHBOARD.md`.
 - **Désambiguation MCP via `.todomail-config.json`** : le fichier `.mcp.json` initialement prévu en Phase 1 a été abandonné en alpha.2 (inadapté à Claude Desktop). La désambiguation passe désormais par `.todomail-config.json` + vérification `status.rag_name` runtime.
 
 ### Étapes de migration
@@ -261,7 +266,7 @@ La v2.0.0 apporte des ruptures importantes par rapport à la v1.x. Les utilisate
    - Le fichier `.todomail-config.json` sera créé automatiquement par `/start` (choix du serveur MCP).
    - Le dossier `.todomail/` sera créé automatiquement au premier `acquire_lock` (généralement via `/check-inbox`).
    - Les anciens fichiers à la racine du workspace (`.todomail-state.json`, `dashboard_invalidate.txt`) deviennent du bruit inoffensif et peuvent être supprimés manuellement.
-3. **Vérifier les permissions navigateur** : rouvrir `dashboard.html` dans un navigateur Chromium. Le dashboard vous demandera de sélectionner le workspace au premier lancement (API File System Access).
+3. **Ouvrir le dashboard** (v2.2.0+) : lancer `/todomail:dashboard` puis ouvrir l'URL publique (`https://<hostname>`) dans n'importe quel navigateur. Plus de sélection de dossier ni de permissions navigateur. Mise en service initiale du tunnel + Cloudflare Access : `CLOUDFLARE-DASHBOARD.md`.
 
 ### Pour rester en v1.x
 

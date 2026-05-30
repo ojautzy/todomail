@@ -7,14 +7,15 @@ Plugin Claude Code : skills, agents et commandes pour le traitement des emails e
 ```
 todomail/
 ├── .claude-plugin/plugin.json   ← manifeste du plugin (source de vérité pour la version)
-├── commands/*.md                ← commandes utilisateur (/start, /check-inbox, /process-todo, /briefing, /check-agenda)
+├── commands/*.md                ← commandes utilisateur (/start, /dashboard, /check-inbox, /process-todo, /briefing, /check-agenda)
 ├── agents/*.md                  ← agents autonomes (mail-prefilter)
 ├── skills/*/SKILL.md            ← skills (sort-mails, agenda, disponibilites, detection-conflits, briefing, check-agenda, memory-management, classify-attachment, read-odf)
-├── skills/dashboard.html        ← dashboard interactif (copié dans le workspace par /start)
+├── skills/dashboard.html        ← dashboard interactif (copié dans le workspace par /start, servi par lib/serve_dashboard.py depuis v2.2.0)
 ├── hooks/                       ← 5 hooks Claude Code + hooks.json (session_start, enforce_classify, invalidate_dashboard_cache, inject_context, pre_compact)
-├── lib/                         ← 5 helpers Python (state, fs_utils, rag_cache, error_modes, config)
+├── lib/                         ← helpers Python (state, fs_utils, rag_cache, error_modes, config) + serve_dashboard.py (serveur HTTP du dashboard, v2.2.0)
 ├── CHANGELOG.md                 ← historique des versions
 ├── CONNECTORS.md                ← documentation des connecteurs MCP
+├── CLOUDFLARE-DASHBOARD.md      ← mise en service du dashboard sur Internet (tunnel + Cloudflare Access, v2.2.0)
 ├── README.md                    ← documentation principale
 └── README.dashboard.md          ← documentation technique du dashboard
 ```
@@ -23,7 +24,7 @@ todomail/
 
 Depuis alpha.8 (Phase 5), tout l'état runtime pour un workspace vit dans `$CLAUDE_PROJECT_DIR/.todomail/` (state.json, memory_cache.json, invalidate.txt, hooks.log, retry_request.txt, errors_dismiss.txt, precompact_snapshot_*.json). Plus d'écritures dans `$CLAUDE_PLUGIN_DATA` côté plugin — c'était un mauvais fit pour des données spécifiques au workspace (isolation naturelle multi-workspace, plus de mirror à synchroniser).
 
-Le fichier `.todomail-config.json` (racine du workspace, géré par `/start`) stocke `expected_rag_name` pour désambiguer quand plusieurs serveurs MCP archiva sont connectés dans Claude Desktop. Vérifié en début de toutes les commandes MCP-sensibles (`/check-inbox`, `/process-todo`, `/briefing`, `/check-agenda`).
+Le fichier `.todomail-config.json` (racine du workspace, géré par `/start`) stocke `expected_rag_name` pour désambiguer quand plusieurs serveurs MCP archiva sont connectés dans Claude Desktop. Vérifié en début de toutes les commandes MCP-sensibles (`/check-inbox`, `/process-todo`, `/briefing`, `/check-agenda`). Depuis la v2.2.0 (schéma v3), il stocke aussi un bloc `dashboard` (`port`, `hostname`, `team_domain`, `access_aud`) géré par `/dashboard` pour le serveur web et la validation Cloudflare Access.
 
 **Ne jamais recréer `.mcp.json`** : retiré en alpha.2 car inadapté à Claude Desktop (connexions dupliquées, proxy stdio inopérant).
 

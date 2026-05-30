@@ -200,9 +200,9 @@ Si au moins une erreur est non résolue :
 
 ### Accès au dashboard
 
-Indiquer à l'utilisateur qu'il peut ouvrir le dashboard interactif dans son
-navigateur :
+Depuis la v2.2.0, le dashboard est servi par un serveur local et s'ouvre dans
+**tout navigateur** (Safari, Firefox, mobile) via son URL publique sécurisée par
+Cloudflare Access. Indiquer à l'utilisateur :
 
-```
-file://<chemin_absolu_du_répertoire_de_travail>/dashboard.html
-```
+- si le serveur tourne déjà : ouvrir `https://<hostname>` (ex. `https://todomail.jautzy.com`) ;
+- sinon : lancer `/todomail:dashboard` pour le démarrer.
