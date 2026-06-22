@@ -4,11 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Todomail - Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Dependances CDN EPINGLEES en version (v2.2.4). Ne jamais revenir a @latest / sans version :
+         @babel/standalone@latest est passe en v8 (runtime JSX automatique par defaut) et cassait
+         la transpilation du bloc text/babel ci-dessous (« Cannot use import statement outside a module »),
+         lucide@latest est passe en 1.x (API incompatible avec createIcons/data-lucide). -->
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone@7.29.7/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@0.577.0/dist/umd/lucide.min.js"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',

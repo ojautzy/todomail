@@ -7,6 +7,14 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.2.4] - 2026-06-22
+
+### Corrigé
+
+- **Dashboard : page blanche causée par une dépendance CDN non épinglée (Babel 8)** — Le dashboard charge React, Babel, lucide et Tailwind depuis des CDN ; `@babel/standalone` et `lucide` étaient référencés sans version (`@latest`). `@babel/standalone@latest` est passé en **v8**, qui bascule le runtime JSX par défaut de `classic` vers `automatic` : le bloc `<script type="text/babel">` était alors transpilé avec des `import … from "react/jsx-runtime"` puis injecté comme script classique, provoquant `SyntaxError: Cannot use import statement outside a module`. Conséquence : React ne montait plus, `#root` restait vide (**page blanche**) et l'application n'émettait jamais d'appel `/api/poll`. En parallèle, `lucide@latest` était passé en `1.21.0`, dont l'API est incompatible avec l'usage `lucide.createIcons()` / `data-lucide` (lignée `0.x`). **Toutes les dépendances CDN sont désormais épinglées en version** : `@babel/standalone@7.29.7`, `lucide@0.577.0`, `react`/`react-dom@18.3.1`, `tailwindcss@3.4.17`. Plus aucune rupture possible par bascule de version amont. Aucun changement côté serveur, tunnel ou Cloudflare Access (tous sains).
+
+---
+
 ## [2.2.3] - 2026-05-30
 
 ### Corrigé
