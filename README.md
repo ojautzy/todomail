@@ -59,7 +59,7 @@ le cache RAG partagé (via `lib/rag_cache.py`) et l'écriture d'un
 
 ## Dashboard interactif
 
-Le fichier `dashboard.html` (copié à la racine du répertoire de travail par `/start`) est une interface web locale avec deux vues principales :
+Le dashboard (`skills/dashboard.html`, servi exclusivement depuis le plugin par `lib/serve_dashboard.py` — plus aucune copie dans le workspace depuis la v2.3.0) est une interface web avec deux vues principales :
 
 - **Catégorisation** : navigation entre les catégories de mails triés, consultation des synthèses et ajustement des actions. Les fichiers `instructions.json` sont générés et mis à jour automatiquement (valeurs par défaut : SUPPRIMER pour la Corbeille, TRAITER pour les autres catégories).
 - **Tâches** : gestionnaire de tâches en 3 sections — suivi des consultations en cours (`consult.md`), mails à envoyer (`to-send/`), et travail à faire (`to-work/`). Chaque section offre aperçu, édition, copie presse-papier et suppression avec confirmation inline.
@@ -176,11 +176,10 @@ répertoire de travail/
 ├── to-brief/                   ← dossiers de préparation des réunions
 ├── docs/                       ← base documentaire (indexée par le connecteur MCP/RAG)
 ├── consult.md                  ← registre des consultations en cours
-├── dashboard.html              ← interface interactive de gestion des mails
-├── .todomail-config.json       ← config workspace (schéma v2 : expected_rag_name + bloc imap, chmod 600, géré par /start)
-├── .todomail/                  ← runtime du plugin (alpha.8+) : state.json, memory_cache.json,
-│                                  invalidate.txt, hooks.log, retry_request.txt, errors_dismiss.txt,
-│                                  precompact_snapshot_*.json — géré automatiquement, gitignoré
+├── .todomail-config.json       ← config workspace partagée (schéma v4 : expected_rag_name, AUCUN secret, géré par /start)
+├── .todomail/                  ← runtime partagé du plugin : state.json, invalidate.txt,
+│                                  retry_request.txt, errors_dismiss.txt, precompact_snapshot_*.json
+│                                  — géré automatiquement, gitignoré
 ├── CLAUDE.md                   ← mémoire courante (~250 lignes max)
 └── memory/
     ├── people/                 ← profils des collaborateurs
@@ -188,24 +187,44 @@ répertoire de travail/
     └── context/                ← structure, équipes, process, réunions récurrentes, lieux, préférences agenda
 ```
 
+En complément, chaque machine possède un répertoire **machine-local** hors du workspace (v2.3.0) :
+
+```
+~/.config/todomail/<slug>/       ← <slug> = <basename du workspace>-<sha256(realpath)[:8]>, mode 700
+├── config.json                  ← blocs imap + dashboard (chmod 600, propre à ce mac)
+├── memory_cache.json            ← cache mémoire régénérable (hooks/session_start.py)
+└── logs/                        ← serve_dashboard.log, check_inbox.log, hooks.log
+```
+
 ## Configuration
 
-Le plugin travaille directement dans le répertoire de travail de l'utilisateur. Aucune configuration de chemin n'est nécessaire : tout est créé automatiquement par la commande `/start`, y compris le fichier `dashboard.html` placé à la racine du répertoire de travail.
+Le plugin travaille directement dans le répertoire de travail de l'utilisateur. Aucune configuration de chemin n'est nécessaire : tout est créé automatiquement par la commande `/start`.
 
-### Configuration IMAP (depuis v2.1.0)
+### Configuration IMAP (machine-locale depuis v2.3.0)
 
-Le téléchargement des mails est désormais pris en charge par le plugin lui-même via le skill interne `fetch-imap` (plus de dépendance au MCP pour IMAP). La configuration IMAP (hostname, port, username, password) est stockée dans le fichier `.todomail-config.json` du workspace (bloc `imap`), écrit avec `chmod 600` et gitignoré.
+Le téléchargement des mails est pris en charge par le plugin lui-même via le skill interne `fetch-imap` (plus de dépendance au MCP pour IMAP). La configuration IMAP (hostname, port, username, password) est stockée dans le fichier **machine-local** `~/.config/todomail/<slug>/config.json` (bloc `imap`, chmod 600, hors iCloud) : le mot de passe IMAP généré par Proton Bridge est différent sur chaque mac.
 
 **Première configuration** : à la première exécution de `/start`, la section 0c demande interactivement les 4 valeurs :
 
 - **hostname** — par défaut `127.0.0.1` (proton-bridge local)
 - **port** — par défaut `1143` (proton-bridge STARTTLS), `143` (IMAP standard) ou `993` (IMAPS direct)
 - **username** — adresse email du compte IMAP
-- **password** — mot de passe IMAP (pour Gmail/Outlook/Proton : un mot de passe d'application dédié)
+- **password** — mot de passe IMAP du Bridge de **ce mac** (pour Gmail/Outlook : un mot de passe d'application dédié)
 
-La section 0c est **idempotente** : si les 4 champs sont déjà présents, rien n'est demandé. Pour reconfigurer : supprimer le bloc `imap` du fichier et relancer `/start`.
+La section 0c est **idempotente** : si les 4 champs sont déjà présents, rien n'est demandé. Pour reconfigurer : supprimer le bloc `imap` du fichier local et relancer `/start`.
 
-**Avertissement sensibilité** : le mot de passe est stocké en clair dans `.todomail-config.json`. Le plugin applique `chmod 600` et le fichier doit rester gitignoré. Si le répertoire de travail est synchronisé dans le cloud (Dropbox, iCloud, OneDrive), le secret peut y être copié : à éviter, ou utiliser un mot de passe d'application révocable.
+**Avertissement sensibilité** : le mot de passe est stocké en clair dans `~/.config/todomail/<slug>/config.json` (répertoire 700, fichier 600). Depuis la v2.3.0, aucun secret ne transite plus par le workspace : `.todomail-config.json` (schéma v4) ne contient plus que `expected_rag_name`. Une config legacy (v3, bloc `imap` dans le workspace) est migrée automatiquement au prochain `/start`.
+
+### Utilisation multi-Mac (workspace synchronisé iCloud)
+
+Le plugin supporte un workspace partagé entre plusieurs macs via iCloud Drive (ex. `/check-inbox` sur le mac A, consultation du dashboard, puis `/process-todo` sur le mac B). Règles :
+
+- **Lancer `/todomail:start` sur chaque mac** : la config IMAP est machine-locale, le mot de passe Proton Bridge est propre à chaque machine.
+- **Un seul mac serveur de dashboard** : celui qui héberge le tunnel cloudflared. Les autres macs consultent le dashboard via l'URL publique Cloudflare, sans rien lancer localement.
+- **Ne JAMAIS lancer `/check-inbox` ou `/process-todo` simultanément sur les deux macs.** Le verrou `active_lock` de `state.json` est partagé via iCloud avec une latence de synchronisation : il ne protège pas contre une exécution réellement simultanée. La non-simultanéité est de la responsabilité de l'utilisateur.
+- **Latence iCloud assumée** : la bannière « Claude travaille… » du dashboard peut apparaître avec quelques secondes/minutes de retard quand le cycle tourne sur l'autre mac.
+- **Désactiver « Optimiser le stockage du Mac »** (ou activer « Conserver le téléchargement » sur le dossier du workspace) sur chaque mac, pour éviter que des mails soient remplacés par des placeholders `.icloud` non lisibles par le plugin.
+- **Procédure de migration recommandée** (config v3 → v4) : lancer `/todomail:start` sur le premier mac, attendre la synchronisation iCloud du `.todomail-config.json` purgé, puis lancer `/todomail:start` sur le second. Si les deux macs migrent avant synchronisation, ce n'est pas grave (le flag `migrated_from_legacy` force la confirmation du mot de passe des deux côtés), mais iCloud peut créer un fichier « conflit » à nettoyer.
 
 ### Configuration RAG et calendriers (MCP)
 

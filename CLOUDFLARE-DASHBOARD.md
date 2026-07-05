@@ -89,8 +89,9 @@ Dans Claude Code, lancer :
 ```
 
 La commande demande (si absents) `port`, `hostname`, `team_domain`, `access_aud`,
-les écrit dans `.todomail-config.json` (bloc `dashboard`, `chmod 600`), vérifie PyJWT,
-puis démarre le serveur en arrière-plan détaché et affiche l'URL publique.
+les écrit dans la config **machine-locale** `~/.config/todomail/<slug>/config.json`
+(bloc `dashboard`, `chmod 600` — propre au mac serveur du tunnel, depuis la v2.3.0),
+vérifie PyJWT, puis démarre le serveur en arrière-plan détaché et affiche l'URL publique.
 
 ## E. Tester
 
@@ -116,8 +117,9 @@ puis démarre le serveur en arrière-plan détaché et affiche l'URL publique.
 | TLS | terminé au edge Cloudflare (certificat managé) ; aucune gestion de certificat sur le Mac |
 
 Mono-utilisateur : aucune gestion de comptes. Le seul « compte » est l'email autorisé dans la
-policy Access. Le fichier `.todomail-config.json` (qui contient aussi le mot de passe IMAP) reste
-en `chmod 600` et hors Git.
+policy Access. Les secrets (mot de passe IMAP, identifiants Access) vivent dans la config
+machine-locale `~/.config/todomail/<slug>/config.json` (répertoire 700, fichier 600, hors iCloud
+et hors Git) — depuis la v2.3.0, `.todomail-config.json` (workspace) ne contient plus aucun secret.
 
 ## Toujours actif (optionnel)
 
@@ -146,11 +148,15 @@ installer un LaunchAgent `~/Library/LaunchAgents/com.todomail.dashboard.plist` :
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/chemin/vers/le/workspace/.todomail/serve_dashboard.log</string>
-  <key>StandardErrorPath</key><string>/chemin/vers/le/workspace/.todomail/serve_dashboard.log</string>
+  <key>StandardOutPath</key><string>/Users/<vous>/.config/todomail/<slug>/logs/serve_dashboard.log</string>
+  <key>StandardErrorPath</key><string>/Users/<vous>/.config/todomail/<slug>/logs/serve_dashboard.log</string>
 </dict>
 </plist>
 ```
+
+Le `<slug>` est le nom du répertoire machine-local du workspace (ex. `DIRMC-3fa2b91c`) ;
+le retrouver via `ls ~/.config/todomail/` ou le calculer :
+`python3 -c "import sys; sys.path.insert(0,'/chemin/vers/le/plugin/todomail'); from lib.config import local_config_dir; print(local_config_dir('/chemin/vers/le/workspace'))"`.
 
 Puis : `launchctl load ~/Library/LaunchAgents/com.todomail.dashboard.plist`. Faire de même pour
 `cloudflared` si l'on veut un accès Internet réellement permanent.
