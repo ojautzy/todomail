@@ -6,7 +6,9 @@ avec les adaptations suivantes :
 - Pas de `python-dotenv` : la configuration IMAP est injectée via `ImapConfig`
   (chargée par l'appelant depuis `.todomail-config.json` via `lib/config.py`).
 - Pas de `subprocess` : appel direct à `eml_parser.write_json_alongside`.
-- Logging optionnel vers `$WORKSPACE/.todomail/check_inbox.log` (best-effort).
+- Logging optionnel vers `check_inbox.log` (best-effort) : répertoire
+  machine-local via le paramètre `log_dir` (v2.3.0), sinon legacy
+  `$WORKSPACE/.todomail/`.
 - `fetch_inbox(inbox_dir, config) -> FetchReport` comme fonction publique ;
   le CLI `main()` est destiné aux tests manuels.
 
@@ -87,11 +89,14 @@ class FetchReport:
 # ── Logging vers le workspace (best-effort) ──────────────────────────────────
 
 
-def _install_workspace_logging() -> None:
-    """Attache un FileHandler vers `$WORKSPACE/.todomail/check_inbox.log`.
+def _install_workspace_logging(log_dir: Path | None = None) -> None:
+    """Attache un FileHandler pour `check_inbox.log` (best-effort).
 
-    Silencieux si `lib.state.runtime_dir()` indisponible (ex : CLI standalone
-    sans workspace).
+    Si `log_dir` est fourni, le log y est écrit (depuis la v2.3.0 :
+    répertoire machine-local `~/.config/todomail/<slug>/logs/`). Sinon,
+    comportement legacy : `$WORKSPACE/.todomail/check_inbox.log`.
+    Silencieux si aucun répertoire résoluble (ex : CLI standalone sans
+    workspace).
     """
     if logger.handlers:
         return
@@ -102,8 +107,10 @@ def _install_workspace_logging() -> None:
     ))
     logger.addHandler(stream)
     try:
-        from lib.state import runtime_dir  # lazy import (plugin-only)
-        log_path = runtime_dir() / "check_inbox.log"
+        if log_dir is None:
+            from lib.state import runtime_dir  # lazy import (plugin-only)
+            log_dir = runtime_dir()
+        log_path = Path(log_dir) / "check_inbox.log"
         fh = logging.FileHandler(log_path, encoding="utf-8")
         fh.setFormatter(logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -422,12 +429,18 @@ def _process_inbox(
 # ── API publique ─────────────────────────────────────────────────────────────
 
 
-def fetch_inbox(inbox_dir: Path, config: ImapConfig) -> FetchReport:
+def fetch_inbox(
+    inbox_dir: Path,
+    config: ImapConfig,
+    log_dir: Path | None = None,
+) -> FetchReport:
     """Point d'entrée principal. Ne lève jamais.
 
     Idempotent via `inbox_dir/.inbox_state.json` (uidvalidity + last_uid).
+    `log_dir` : répertoire où écrire `check_inbox.log` (défaut legacy :
+    `$WORKSPACE/.todomail/`). Best-effort dans les deux cas.
     """
-    _install_workspace_logging()
+    _install_workspace_logging(log_dir)
     inbox_dir = Path(inbox_dir).resolve()
     logger.info(
         "Connexion a %s:%d en tant que %s...",
@@ -494,22 +507,24 @@ def main() -> int:
         sys.path.insert(0, plugin_root)
 
     try:
-        from lib.state import workspace_dir
-        from lib.config import load_config
+        from lib.state import local_runtime_dir, workspace_dir
+        from lib.config import get_imap_config
     except ImportError as e:
         print(f"ERROR: impossible d'importer lib.* — CLAUDE_PLUGIN_ROOT non défini ? {e}",
               file=sys.stderr)
         return 1
 
     ws = Path(args.workspace) if args.workspace else workspace_dir()
-    cfg = load_config(ws)
-    if not cfg or not cfg.get("imap"):
-        print("ERROR: IMAP non configuré dans .todomail-config.json — lance /todomail:start",
+    imap_block = get_imap_config(ws)
+    if not imap_block:
+        print("ERROR: config IMAP absente sur cette machine — lance /todomail:start "
+              "(le mot de passe Proton Bridge est propre à chaque mac)",
               file=sys.stderr)
         return 2
 
-    imap_cfg = ImapConfig(**cfg["imap"])
-    report = fetch_inbox(ws / "inbox", imap_cfg)
+    imap_block = {k: v for k, v in imap_block.items() if k != "migrated_from_legacy"}
+    imap_cfg = ImapConfig(**imap_block)
+    report = fetch_inbox(ws / "inbox", imap_cfg, log_dir=local_runtime_dir(ws))
     print(report.as_json())
     return 0 if report.success else 1
 
