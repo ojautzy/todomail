@@ -16,11 +16,13 @@ TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
 # Isolation : on force CLAUDE_PROJECT_DIR dans un temp pour ne pas
-# polluer l'environnement utilisateur. Depuis alpha.8, tout l'etat
-# runtime (state.json, memory_cache.json, snapshots, etc.) vit sous
-# $CLAUDE_PROJECT_DIR/.todomail/ — plus de variable CLAUDE_PLUGIN_DATA
-# necessaire.
+# polluer l'environnement utilisateur. Depuis alpha.8, l'etat runtime
+# PARTAGE (state.json, snapshots, marqueurs) vit sous
+# $CLAUDE_PROJECT_DIR/.todomail/. Depuis la v2.3.0, les fichiers
+# machine-locaux (memory_cache.json, logs) vivent sous
+# $TODOMAIL_CONFIG_HOME/<slug>/ — force aussi dans le temp.
 export CLAUDE_PROJECT_DIR="$TMPDIR/project"
+export TODOMAIL_CONFIG_HOME="$TMPDIR/config-home"
 mkdir -p "$CLAUDE_PROJECT_DIR"
 
 check() {
@@ -96,8 +98,14 @@ echo "=== session_start ==="
 
 out=$(echo '{"hook_event_name":"SessionStart","source":"startup"}' | python3 hooks/session_start.py)
 check "exit 0 sans crash" bash -c 'true'
-# Le cache mémoire doit avoir été créé (même s'il est vide)
-check "memory_cache.json cree" bash -c '[ -f "$CLAUDE_PROJECT_DIR/.todomail/memory_cache.json" ]'
+# Le cache mémoire doit avoir été créé dans le répertoire machine-local (v2.3.0)
+check "memory_cache.json cree (machine-local)" bash -c 'ls "$TODOMAIL_CONFIG_HOME"/*/memory_cache.json >/dev/null 2>&1'
+check "memory_cache.json absent du workspace" bash -c '[ ! -f "$CLAUDE_PROJECT_DIR/.todomail/memory_cache.json" ]'
+# Nettoyage d'un cache legacy laisse dans .todomail/
+mkdir -p "$CLAUDE_PROJECT_DIR/.todomail"
+echo '{}' > "$CLAUDE_PROJECT_DIR/.todomail/memory_cache.json"
+echo '{"hook_event_name":"SessionStart","source":"startup"}' | python3 hooks/session_start.py >/dev/null
+check "cache legacy .todomail/ nettoye" bash -c '[ ! -f "$CLAUDE_PROJECT_DIR/.todomail/memory_cache.json" ]'
 
 check "stdin vide : exit 0" bash -c 'echo -n "" | python3 hooks/session_start.py'
 

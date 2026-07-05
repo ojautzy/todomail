@@ -21,13 +21,13 @@ du dashboard, injection contextuelle, anti-compaction.
   (workspace utilisateur ; la `cwd` du payload sert de repli).
 - **Sortie** : JSON structuré sur stdout (`hookSpecificOutput` avec
   `additionalContext` ou `permissionDecision`). Silence par défaut.
-- **Stockage** : depuis alpha.8, tout l'état runtime du plugin pour
+- **Stockage** : depuis alpha.8, l'état runtime PARTAGÉ du plugin pour
   un workspace vit dans **`$CLAUDE_PROJECT_DIR/.todomail/`** (state.json,
-  memory_cache.json, invalidate.txt, hooks.log, retry_request.txt,
-  errors_dismiss.txt, precompact_snapshot_*.json). Plus d'écritures
-  dans `$CLAUDE_PLUGIN_DATA` — l'usage de cette variable était
-  inadapté pour des données spécifiques au workspace (cf. CHANGELOG
-  alpha.8).
+  invalidate.txt, retry_request.txt, errors_dismiss.txt,
+  precompact_snapshot_*.json). Depuis la v2.3.0, les fichiers
+  machine-locaux (memory_cache.json, hooks.log et autres logs) vivent
+  dans **`~/.config/todomail/<slug>/`** (hors iCloud, cf. CLAUDE.md
+  section « Runtime du plugin »).
 
 ## Hooks livrés
 
@@ -39,7 +39,8 @@ du dashboard, injection contextuelle, anti-compaction.
   `to-send/`, `to-work/`, `docs/`) dans `$CLAUDE_PROJECT_DIR` ;
 - compile un index léger de la mémoire (`memory/people/`,
   `memory/projects/`, `memory/context/`) dans
-  `$CLAUDE_PROJECT_DIR/.todomail/memory_cache.json` ;
+  `~/.config/todomail/<slug>/memory_cache.json` (machine-local depuis
+  la v2.3.0 ; un cache legacy trouvé dans `.todomail/` est nettoyé) ;
 - consomme les fichiers-marqueurs écrits par le dashboard
   (`.todomail/retry_request.txt`, `.todomail/errors_dismiss.txt`)
   pour annoter `state.errors[]` ou retirer des entrées ;
@@ -171,7 +172,8 @@ Pour vérifier que les hooks se déclenchent bien via le chemin
 *Customize → Plugins* de Claude Desktop, créer un fichier vide
 `.hooks_debug` à la racine du projet (`$CLAUDE_PROJECT_DIR`) avant
 d'ouvrir une session. `session_start.py` écrira alors une ligne
-dans `$CLAUDE_PROJECT_DIR/.todomail/hooks.log` à chaque déclenchement,
+dans `~/.config/todomail/<slug>/logs/hooks.log` (machine-local depuis
+la v2.3.0) à chaque déclenchement,
 avec source, session_id, cwd, sys.executable et résolution des
 variables `CLAUDE_PROJECT_DIR` et `CLAUDE_PLUGIN_ROOT`.
 
