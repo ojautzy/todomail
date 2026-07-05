@@ -30,7 +30,7 @@ PY
 
 ### Étape 0. Configuration du dashboard
 
-Lire le bloc `dashboard` de `.todomail-config.json` :
+Depuis la v2.3.0, le bloc `dashboard` est **machine-local** (`~/.config/todomail/<slug>/config.json`) : cette configuration est propre au **mac serveur** (celui qui héberge le tunnel cloudflared). Sur un workspace multi-Mac, un seul mac la possède. Lire le bloc via `get_dashboard_config()` (fallback legacy sur `.todomail-config.json` non migré, avec avertissement) :
 
 ```bash
 python3 - <<'PY'
@@ -62,11 +62,11 @@ import os, sys
 plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
 sys.path.insert(0, plugin_root)
 from lib.state import workspace_dir
-from lib.config import save_dashboard_config
+from lib.config import save_dashboard_config, local_config_path
 # Remplacer par les valeurs collectees aupres de l'utilisateur :
 save_dashboard_config(workspace_dir(), port=8770, hostname="todomail.jautzy.com",
                       team_domain="jautzy", access_aud="<AUD_TAG>")
-print("OK")
+print(f"OK — config machine-locale : {local_config_path(workspace_dir())}")
 PY
 ```
 
@@ -96,19 +96,33 @@ lsof -nP -iTCP:$PORT -sTCP:LISTEN 2>/dev/null && echo "DEJA ACTIF" || echo "INAC
 
 ### Étape 3. Lancer le serveur détaché
 
-Lancer le serveur en arrière-plan, détaché de la session Claude (survit à la fermeture de Claude Code) :
+Le log est machine-local (`~/.config/todomail/<slug>/logs/serve_dashboard.log`). Comme le chemin contient le slug du workspace, le calculer côté Python (jamais en dur) :
+
+```bash
+LOG_FILE="$(python3 - <<'PY'
+import os, sys
+plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+sys.path.insert(0, plugin_root)
+from lib.state import local_runtime_dir
+print(local_runtime_dir() / "serve_dashboard.log")
+PY
+)"
+echo "$LOG_FILE"
+```
+
+Puis lancer le serveur en arrière-plan, détaché de la session Claude (survit à la fermeture de Claude Code) :
 
 ```bash
 PORT=8770   # port configuré
 cd "$CLAUDE_PROJECT_DIR"
 PYTHONPATH="$CLAUDE_PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$CLAUDE_PROJECT_DIR" \
   nohup python3 -m lib.serve_dashboard --port $PORT \
-  >> "$CLAUDE_PROJECT_DIR/.todomail/serve_dashboard.log" 2>&1 &
+  >> "$LOG_FILE" 2>&1 &
 disown
 sleep 1
 ```
 
-Vérifier le démarrage : `tail -n 5 "$CLAUDE_PROJECT_DIR/.todomail/serve_dashboard.log"` doit afficher la ligne `[todomail] dashboard servi sur http://127.0.0.1:$PORT | auth: Cloudflare Access (JWT)`. Si le log montre une erreur (config Access incomplète ou PyJWT manquant), corriger (Étapes 0/1) et relancer.
+Vérifier le démarrage : `tail -n 5 "$LOG_FILE"` doit afficher la ligne `[todomail] dashboard servi sur http://127.0.0.1:$PORT | auth: Cloudflare Access (JWT)`. Si le log montre une erreur (config Access incomplète ou PyJWT manquant), corriger (Étapes 0/1) et relancer.
 
 ### Étape 4. Route Cloudflare (guidée — non automatique)
 
@@ -150,7 +164,7 @@ Dashboard servi.
 - URL publique : https://todomail.jautzy.com   (à utiliser au Mac comme à distance — authentification Cloudflare Access par code email)
 - Local        : http://127.0.0.1:8770          (renvoie 403 en direct : c'est normal, l'accès passe par l'URL publique)
 - Auth         : Cloudflare Access (OTP email)
-- Log          : .todomail/serve_dashboard.log
+- Log          : ~/.config/todomail/<slug>/logs/serve_dashboard.log (machine-local)
 - Arrêt        : kill <PID>   (PID visible via : lsof -nP -iTCP:8770 -sTCP:LISTEN)
 ```
 
@@ -158,4 +172,5 @@ Dashboard servi.
 
 - **Un seul point d'entrée.** Le serveur exige le JWT Cloudflare Access sur toutes les requêtes `/api/*`. Un accès direct à `http://127.0.0.1:8770` renvoie `403` : il faut passer par `https://todomail.jautzy.com`, au Mac comme à distance. Le compromis assumé : Internet et le tunnel doivent être actifs même pour un usage local (régler une durée de session Access généreuse, 1 semaine / 1 mois, évite de refaire l'OTP trop souvent).
 - **Protocole inchangé.** Le serveur lit/écrit exactement les mêmes fichiers que l'ancien dashboard (`todo/<cat>/instructions.json`, `.todomail/state.json`, fichiers-marqueurs). Aucune modification de `/process-todo`, `/check-inbox` ou des hooks. Pendant qu'un cycle Claude tient le verrou, les écritures du dashboard renvoient `409` et l'UI affiche la bannière « Claude travaille… ».
-- **Toujours actif (optionnel).** Pour un serveur permanent (démarrage à l'ouverture de session, redémarrage après crash), installer un LaunchAgent `~/Library/LaunchAgents/com.todomail.dashboard.plist` qui lance `python3 -m lib.serve_dashboard --port 8770` (avec `PYTHONPATH`/`CLAUDE_PROJECT_DIR`). Voir `CLOUDFLARE-DASHBOARD.md`.
+- **Toujours actif (optionnel).** Pour un serveur permanent (démarrage à l'ouverture de session, redémarrage après crash), installer un LaunchAgent `~/Library/LaunchAgents/com.todomail.dashboard.plist` qui lance `python3 -m lib.serve_dashboard --port 8770` (avec `PYTHONPATH`/`CLAUDE_PROJECT_DIR` ; `StandardOutPath`/`StandardErrorPath` vers `~/.config/todomail/<slug>/logs/serve_dashboard.log`). Voir `CLOUDFLARE-DASHBOARD.md`.
+- **Multi-Mac.** La config dashboard et le serveur ne vivent que sur le mac serveur du tunnel. Les autres macs consultent le dashboard via l'URL publique, sans rien lancer localement.

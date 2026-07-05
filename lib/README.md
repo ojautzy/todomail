@@ -39,7 +39,8 @@ le runtime du plugin pour un workspace vit dans `.todomail/`, plus de
 | Fonction | Description |
 |----------|-------------|
 | `workspace_dir()` | Resout `$CLAUDE_PROJECT_DIR` ou cwd contenant `.todomail-config.json` |
-| `runtime_dir()` | Dossier `.todomail/` (cree a la volee) |
+| `runtime_dir()` | Dossier `.todomail/` partage (cree a la volee) |
+| `local_runtime_dir(workspace=None)` | Dossier de logs machine-local `~/.config/todomail/<slug>/logs/` (v2.3.0) |
 | `load_state()` | Charge ou cree le state avec schema par defaut |
 | `save_state(state)` | Ecriture atomique + touche `invalidate.txt` (notif dashboard) |
 | `update_checkpoint(phase, status, payload)` | Ajoute un point de controle |
@@ -98,28 +99,57 @@ Enum `ErrorAction` : `CONTINUE`, `STOP_AND_ASK`, `RETRY_LATER`
 
 Classe `ErrorHandler(mode)` : gere les erreurs selon le mode configure.
 
-### `config.py` — Config workspace `.todomail-config.json`
+### `config.py` — Config partagee (workspace) et machine-locale
 
-Helpers pour gerer la config locale du workspace (fichier `.todomail-config.json` a la racine du repertoire de travail). Permet de desambiguer quand plusieurs serveurs MCP archiva sont connectes dans Claude Desktop.
+Depuis la v2.3.0 (usage multi-Mac, workspace synchronise iCloud), la config
+est separee en deux niveaux :
+
+- **Partage** : `.todomail-config.json` a la racine du workspace (schema v4,
+  AUCUN secret : `expected_rag_name`, `configured_at`). Sert aussi de
+  marqueur de detection du workspace — ne jamais le supprimer.
+- **Local** : `~/.config/todomail/<slug>/config.json` (schema local v1,
+  chmod 600, repertoire 700, racine surchargeable via `$TODOMAIL_CONFIG_HOME`)
+  avec les blocs `imap` et `dashboard`, propres a chaque machine.
 
 | Fonction | Description |
 |----------|-------------|
-| `config_path(workspace)` | Retourne le chemin du fichier de config |
-| `load_config(workspace)` | Charge la config (None si absente) |
-| `save_config(workspace, expected_rag_name)` | Cree/met a jour la config avec le nom du serveur attendu |
-| `check_rag_name(workspace, actual_rag_name)` | Verifie que le rag_name actuel correspond a l'attendu. Retourne `(ok, expected)` |
+| `config_path(workspace)` | Chemin du fichier partage |
+| `load_config(workspace)` | Vue fusionnee : partage + blocs `imap`/`dashboard` locaux superposes (None si partage absent) |
+| `save_config(workspace, expected_rag_name)` | Cree/met a jour le fichier partage en v4 (migre d'abord les blocs legacy) |
+| `check_rag_name(workspace, actual_rag_name)` | Verifie le rag_name attendu (fichier partage). Retourne `(ok, expected)` |
+| `local_config_home()` | `$TODOMAIL_CONFIG_HOME` ou `~/.config/todomail` |
+| `workspace_slug(workspace)` | `<basename>-<sha256(realpath)[:8]>` (ex. `DIRMC-3fa2b91c`) |
+| `local_config_dir(workspace)` | Repertoire local de la machine (cree, mode 700) |
+| `local_config_path(workspace)` | Chemin du `config.json` local |
+| `load_local_config(workspace)` | Charge le config local (None si absent) |
+| `save_imap_config(workspace, hostname, port, username, password, use_starttls)` | Ecrit le bloc `imap` dans le fichier LOCAL (efface un flag `migrated_from_legacy`) |
+| `save_dashboard_config(workspace, port, hostname, team_domain, access_aud)` | Ecrit le bloc `dashboard` dans le fichier LOCAL |
+| `get_imap_config(workspace)` | Bloc `imap` : local d'abord, fallback legacy partage (avertissement stderr) |
+| `get_dashboard_config(workspace)` | Bloc `dashboard` : local d'abord, fallback legacy partage (avertissement stderr) |
+| `migrate_legacy_config(workspace)` | Migration v3→v4 idempotente : deplace `imap`/`dashboard` vers le local (le local gagne en cas de conflit, ecriture locale AVANT purge du partage), tague `migrated_from_legacy` sur un bloc `imap` copie. Retourne `{"migrated": [...], "already_clean": bool}` |
 
-Schema de `.todomail-config.json` :
+Schemas :
 
 ```json
+// .todomail-config.json (partage, v4)
+{
+  "schema_version": 4,
+  "expected_rag_name": "Archiva-Pro",
+  "configured_at": "2026-07-05T12:34:56+00:00"
+}
+
+// ~/.config/todomail/<slug>/config.json (local, v1)
 {
   "schema_version": 1,
-  "expected_rag_name": "Archiva-Pro",
-  "configured_at": "2026-04-17T12:34:56+00:00"
+  "workspace_path": "/Users/.../DIRMC",
+  "imap": { "hostname": "127.0.0.1", "port": 1143, "username": "...",
+            "password": "...", "use_starttls": true },
+  "dashboard": { "port": 8770, "hostname": "...", "team_domain": "...",
+                 "access_aud": "..." }
 }
 ```
 
-Ce fichier est cree automatiquement par `/start` et verifie par `/check-inbox` et `/process-todo`. Il est gitignore (ne doit pas etre committe).
+Le fichier partage est cree automatiquement par `/start` et verifie par `/check-inbox` et `/process-todo`. Il est gitignore (ne doit pas etre committe). Tests : `python3 -m unittest lib.tests.test_config_split`.
 
 ## Schema JSON v2
 

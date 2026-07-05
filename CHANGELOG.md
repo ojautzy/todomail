@@ -7,6 +7,43 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.3.0] - 2026-07-05
+
+Configuration **machine-locale** (Phase 8) : le plugin supporte désormais un workspace synchronisé entre **deux macs par iCloud Drive**. La configuration est séparée en deux niveaux — partagée (workspace, suit les mails via iCloud) et machine-locale (`~/.config/todomail/<slug>/`, propre à chaque mac, hors iCloud). Motivation : le mot de passe IMAP généré par Proton Bridge est différent sur chaque mac (le bloc `imap` du fichier partagé faisait transiter un secret par iCloud et écraser le mot de passe d'un mac par celui de l'autre), et le dashboard n'est servi que par le mac qui héberge le tunnel cloudflared.
+
+### Ajouté
+
+- **Config machine-locale `~/.config/todomail/<slug>/`** — `<slug> = <basename du workspace>-<sha256(realpath)[:8]>` (ex. `DIRMC-3fa2b91c`), racine surchargeable via `$TODOMAIL_CONFIG_HOME` (tests), répertoire en mode 700. Contient `config.json` (schéma local v1, chmod 600, blocs `imap` + `dashboard`), `memory_cache.json` (cache régénérable) et `logs/` (`serve_dashboard.log`, `check_inbox.log`, `hooks.log`).
+- **Nouvelles fonctions `lib/config.py`** — `local_config_home()`, `workspace_slug()`, `local_config_dir()`, `local_config_path()`, `load_local_config()`, `get_imap_config()`, `migrate_legacy_config()` ; constantes `SCHEMA_VERSION = 4` et `LOCAL_SCHEMA_VERSION = 1`.
+- **`lib/state.local_runtime_dir(workspace=None)`** — répertoire des logs machine-locaux (`<local>/logs/`), créé à la volée ; `runtime_dir()` (`.todomail/` partagé) inchangé.
+- **Migration automatique v3 → v4 (`migrate_legacy_config`)** — idempotente, appelée par `/todomail:start` : déplace les blocs `imap`/`dashboard` du fichier partagé vers la config locale puis purge le partagé. Ordre atomique : le fichier local est écrit et relu avec succès AVANT la purge (jamais de perte de secret). En cas de conflit, le bloc local existant gagne (le mot de passe Proton Bridge de la machine courante est le bon). Un bloc `imap` copié depuis le legacy est tagué `migrated_from_legacy: true` : `/start` (étape 0c bis) confirme que le mot de passe est bien celui du Bridge de CE mac (test LOGIN/LOGOUT best-effort, sinon question) avant d'effacer le flag — la migration est donc sûre quel que soit le mac qui lance `/start` en premier.
+- **Étape 0c bis de `/todomail:start`** — confirmation/ressaisie du mot de passe IMAP migré (voir ci-dessus).
+- **Section « Utilisation multi-Mac » dans README.md** — un `/start` par mac, un seul mac serveur de dashboard, jamais de `/check-inbox`/`/process-todo` simultanés, latence iCloud assumée sur la bannière « Claude travaille… », recommandation de désactiver « Optimiser le stockage du Mac », procédure de migration recommandée (un mac, sync, puis l'autre).
+- **Tests `lib/tests/test_config_split.py`** — 12 tests stdlib `unittest` (split écriture, vue fusionnée, migration idempotente, local non écrasé, flag de migration, fallback legacy, slugs distincts), exécutables via `python3 -m unittest lib.tests.test_config_split`.
+
+### Modifié
+
+- **`.todomail-config.json` (workspace) passe en schéma v4, sans aucun secret** — ne contient plus que `schema_version`, `expected_rag_name`, `configured_at`. Il RESTE dans le workspace : c'est le marqueur de détection utilisé par `lib/state.workspace_dir()`.
+- **`lib/config.load_config()` retourne une vue fusionnée** — contenu du fichier partagé (None si absent, sémantique inchangée) avec les blocs `imap`/`dashboard` superposés depuis le fichier local (précédence : local > legacy partagé). Les appelants existants fonctionnent sans changement.
+- **`save_imap_config()` / `save_dashboard_config()` écrivent dans le fichier LOCAL uniquement** — chacune préserve le bloc voisin ; `save_imap_config` efface le flag `migrated_from_legacy` (ressaisie).
+- **Rétrocompatibilité en lecture** — tant que la migration n'a pas eu lieu, `get_imap_config()`/`get_dashboard_config()` retombent sur le bloc legacy du fichier partagé avec un avertissement stderr invitant à lancer `/todomail:start`.
+- **`lib/serve_dashboard.py`** — log dans `~/.config/todomail/<slug>/logs/serve_dashboard.log` ; message d'erreur de config Access absente orienté « lance /todomail:dashboard SUR CE MAC ».
+- **`skills/fetch-imap`** — `fetch_inbox()` accepte un paramètre optionnel `log_dir` (le log `check_inbox.log` devient machine-local) ; la CLI lit la config via `get_imap_config()`.
+- **`hooks/session_start.py`** — `memory_cache.json` écrit dans le répertoire machine-local (un cache legacy dans `.todomail/` est nettoyé silencieusement) ; `hooks.log` (mode `.hooks_debug`) écrit dans `<local>/logs/`. La consommation de `retry_request.txt`/`errors_dismiss.txt` reste inchangée (fichiers partagés).
+- **`/todomail:dashboard`** — la config est machine-locale (mac serveur) ; le chemin du log `nohup` est calculé en Python (contient le slug) ; chemins LaunchAgent mis à jour (`CLOUDFLARE-DASHBOARD.md`).
+- **`/todomail:check-inbox`** — lecture du bloc IMAP via `get_imap_config()` ; message d'erreur « Config IMAP absente sur cette machine — lance /todomail:start (le mot de passe Proton Bridge est propre à chaque mac) ».
+- **Documentation** — CLAUDE.md (section « Runtime du plugin » réécrite : split partagé/local + règle de classement de tout nouveau fichier runtime), README.md, README.dashboard.md, CLOUDFLARE-DASHBOARD.md, lib/README.md, hooks/README.md.
+
+### Supprimé
+
+- **Copie workspace de `dashboard.html`** — le serveur sert exclusivement la copie du plugin (`skills/dashboard.html`) ; plus de fallback workspace (500 explicite si la copie plugin est introuvable). `/todomail:start` ne copie plus le fichier et supprime une copie héritée avec message.
+
+### Note de migration
+
+Aucune action manuelle : lancer `/todomail:start` sur chaque mac (l'un après l'autre, en laissant iCloud synchroniser entre les deux). La migration déplace les secrets vers `~/.config/todomail/<slug>/config.json` et purge le fichier partagé ; l'étape 0c bis vérifie que le mot de passe IMAP correspond bien au Proton Bridge de la machine. Après mise à jour du plugin : redémarrer le serveur du dashboard (`kill` + `/todomail:dashboard`) sur le mac serveur.
+
+---
+
 ## [2.2.4] - 2026-06-22
 
 ### Corrigé

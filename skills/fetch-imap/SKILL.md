@@ -34,12 +34,12 @@ Le skill **ne gère pas** : le verrou du plugin, le checkpoint `state.json`, la 
 
 ## Où est lue la configuration IMAP
 
-La configuration IMAP vit dans `$WORKSPACE/.todomail-config.json`, bloc `imap` (schéma v2 géré par `lib/config.py`) :
+Depuis la v2.3.0, la configuration IMAP est **machine-locale** : elle vit dans `~/.config/todomail/<slug>/config.json`, bloc `imap` (schéma local v1 géré par `lib/config.py` — le mot de passe Proton Bridge est propre à chaque mac, il ne transite plus par le workspace synchronisé iCloud) :
 
 ```json
 {
-  "schema_version": 2,
-  "expected_rag_name": "...",
+  "schema_version": 1,
+  "workspace_path": "/Users/.../DIRMC",
   "imap": {
     "hostname": "127.0.0.1",
     "port": 1143,
@@ -50,7 +50,7 @@ La configuration IMAP vit dans `$WORKSPACE/.todomail-config.json`, bloc `imap` (
 }
 ```
 
-Le skill **ne lit pas le fichier directement** : l'appelant (`/check-inbox`) charge la config via `lib.config.load_config()`, construit un `ImapConfig` et l'injecte en paramètre de `fetch_inbox()`.
+Le skill **ne lit pas le fichier directement** : l'appelant (`/check-inbox`) charge la config via `lib.config.get_imap_config()` (config locale, fallback legacy sur un `.todomail-config.json` v3 non migré), construit un `ImapConfig` et l'injecte en paramètre de `fetch_inbox()`.
 
 ## API publique
 
@@ -89,20 +89,22 @@ class FetchReport:
 
     def as_json(self) -> str: ...
 
-def fetch_inbox(inbox_dir: Path, config: ImapConfig) -> FetchReport:
+def fetch_inbox(inbox_dir: Path, config: ImapConfig,
+                log_dir: Path | None = None) -> FetchReport:
     """Point d'entrée principal.
 
     - Idempotent via `inbox_dir/.inbox_state.json` (uidvalidity + last_uid).
     - Capture toutes les exceptions et les reflète dans `FetchReport`
       (ne lève jamais côté appelant).
-    - Logging best-effort vers `$WORKSPACE/.todomail/check_inbox.log` (via
-      `lib.state.runtime_dir()`).
+    - Logging best-effort vers `check_inbox.log` : dans `log_dir` si fourni
+      (v2.3.0 : `lib.state.local_runtime_dir()`, machine-local), sinon
+      comportement legacy `$WORKSPACE/.todomail/`.
     """
 
 def main() -> int:
     """CLI pour tests manuels : python3 imap_fetch.py [--workspace DIR].
-    Lit `.todomail-config.json` du workspace et appelle `fetch_inbox`.
-    Retourne 0 si succès, 1 sinon."""
+    Lit la config via `get_imap_config()` (locale + fallback legacy) et
+    appelle `fetch_inbox`. Retourne 0 si succès, 1 sinon."""
 ```
 
 ### `eml_parser.py`
@@ -153,19 +155,23 @@ plugin_root = os.environ["CLAUDE_PLUGIN_ROOT"]
 sys.path.insert(0, plugin_root)
 sys.path.insert(0, os.path.join(plugin_root, "skills", "fetch-imap", "scripts"))
 
-from lib.state import acquire_lock, release_lock, update_checkpoint, workspace_dir
-from lib.config import load_config
+from lib.state import (
+    acquire_lock, release_lock, update_checkpoint, workspace_dir, local_runtime_dir,
+)
+from lib.config import get_imap_config
 from imap_fetch import fetch_inbox, ImapConfig
 
 ws = workspace_dir()
-cfg = load_config(ws)
-if not cfg or not cfg.get("imap"):
-    raise RuntimeError("IMAP non configuré — lance /todomail:start")
+imap = get_imap_config(ws)
+if not imap:
+    raise RuntimeError("Config IMAP absente sur cette machine — lance /todomail:start "
+                       "(le mot de passe Proton Bridge est propre à chaque mac)")
+imap = {k: v for k, v in imap.items() if k != "migrated_from_legacy"}
 
 acquire_lock("check-inbox:fetch")
 try:
     update_checkpoint("check-inbox:fetch", "start")
-    report = fetch_inbox(ws / "inbox", ImapConfig(**cfg["imap"]))
+    report = fetch_inbox(ws / "inbox", ImapConfig(**imap), log_dir=local_runtime_dir(ws))
     update_checkpoint(
         "check-inbox:fetch",
         "ok" if report.success else "error",

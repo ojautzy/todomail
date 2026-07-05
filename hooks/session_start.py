@@ -27,9 +27,10 @@ def _project_dir(payload: dict) -> Path:
 def _runtime_dir(project: Path) -> Path:
     """Repertoire `.todomail/` runtime a la racine du workspace utilisateur.
 
-    Depuis alpha.8 : tout l'etat du plugin pour ce workspace est ici, pas
-    dans `$CLAUDE_PLUGIN_DATA` qui est mal adapte (donnees specifiques au
-    workspace, pas globales au plugin).
+    Depuis alpha.8 : l'etat PARTAGE du plugin pour ce workspace est ici
+    (state.json, invalidate.txt, marqueurs). Depuis la v2.3.0, les fichiers
+    machine-locaux (memory_cache.json, logs) vivent dans
+    `~/.config/todomail/<slug>/` — voir `_local_dir()`.
     """
     rt = project / ".todomail"
     try:
@@ -37,6 +38,33 @@ def _runtime_dir(project: Path) -> Path:
     except OSError:
         pass
     return rt
+
+
+def _local_dir(project: Path) -> Path | None:
+    """Repertoire machine-local `~/.config/todomail/<slug>/` (best-effort).
+
+    Retourne None si `lib.config` est indisponible ou si la creation
+    echoue — les ecritures locales sont alors simplement sautees (jamais
+    bloquant, comme tout le reste du hook).
+    """
+    try:
+        from lib.config import local_config_dir
+        return local_config_dir(project)
+    except Exception:
+        return None
+
+
+def _local_logs_dir(project: Path) -> Path | None:
+    """Sous-repertoire `logs/` du repertoire machine-local (best-effort)."""
+    base = _local_dir(project)
+    if base is None:
+        return None
+    logs = base / "logs"
+    try:
+        logs.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return logs
 
 
 def _log_smoke(payload: dict) -> None:
@@ -48,9 +76,11 @@ def _log_smoke(payload: dict) -> None:
     project = _project_dir(payload)
     if not (project / ".hooks_debug").exists():
         return
-    rt = _runtime_dir(project)
+    logs = _local_logs_dir(project)
+    if logs is None:
+        return
     try:
-        with open(rt / "hooks.log", "a", encoding="utf-8") as f:
+        with open(logs / "hooks.log", "a", encoding="utf-8") as f:
             ts = datetime.now(timezone.utc).isoformat()
             f.write(
                 f"{ts} SessionStart "
@@ -80,13 +110,27 @@ def _build_memory_cache(project: Path) -> dict:
 
 
 def _write_memory_cache(project: Path, cache: dict) -> None:
-    rt = _runtime_dir(project)
+    """Ecrit memory_cache.json dans le repertoire machine-local (v2.3.0).
+
+    Cache regenere a chaque session : inutile de le synchroniser via
+    iCloud (source de conflits de fichiers entre les deux macs). Nettoie
+    au passage un cache legacy laisse dans `.todomail/` (silencieux).
+    """
+    local = _local_dir(project)
+    if local is not None:
+        try:
+            tmp = local / "memory_cache.json.tmp"
+            final = local / "memory_cache.json"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(cache, f, ensure_ascii=False, indent=2)
+            os.replace(str(tmp), str(final))
+        except OSError:
+            pass
+    # Nettoyage du cache legacy workspace (best-effort)
     try:
-        tmp = rt / "memory_cache.json.tmp"
-        final = rt / "memory_cache.json"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(cache, f, ensure_ascii=False, indent=2)
-        os.replace(str(tmp), str(final))
+        legacy = _runtime_dir(project) / "memory_cache.json"
+        if legacy.exists():
+            legacy.unlink()
     except OSError:
         pass
 

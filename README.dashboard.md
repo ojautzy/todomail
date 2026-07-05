@@ -15,6 +15,8 @@ L'application est une interface **"Human-in-the-loop"** (l'humain dans la boucle
 
 Depuis la v2.2.0, le dashboard n'utilise plus la File System Access API. Il est servi par un **serveur HTTP local** (`lib/serve_dashboard.py`) qui possède le workspace et expose une **API JSON**. Le navigateur est un client léger qui appelle cette API en `fetch()`. Le filesystem reste le bus de messages avec Claude : le serveur lit/écrit exactement les mêmes fichiers (`instructions.json`, `.todomail/state.json`, fichiers-marqueurs) que l'ancien dashboard.
 
+Depuis la v2.3.0, le serveur sert **exclusivement** la copie du plugin (`skills/dashboard.html`) — plus aucune copie dans le workspace — et sa configuration (`port`, `hostname`, `team_domain`, `access_aud`) est **machine-locale** (`~/.config/todomail/<slug>/config.json`, propre au mac serveur du tunnel). Son log est écrit dans `~/.config/todomail/<slug>/logs/serve_dashboard.log`.
+
 ```
 Navigateur (n'importe où) ──https──► Cloudflare Access ──tunnel──► serveur Python (127.0.0.1) ──► workspace
 ```
@@ -35,11 +37,10 @@ React 18, Tailwind CSS, Lucide Icons (chargés via CDN). API JSON servie par un 
 
 ## **3\. Structure du Répertoire de Travail**
 
-L'application s'attend à trouver l'arborescence suivante relative au fichier dashboard.html :
+Le serveur s'attend à trouver l'arborescence suivante à la racine du workspace (la page `dashboard.html` elle-même est servie depuis le plugin, pas depuis le workspace) :
 
 ```
 /PROJET_RACINE
-│   dashboard.html
 └── todo/
     ├── trash/
     │   ├── pending_emails.json

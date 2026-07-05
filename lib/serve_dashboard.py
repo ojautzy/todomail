@@ -60,7 +60,7 @@ from lib.fs_utils import (  # noqa: E402
     safe_rm,
     write_instructions,
 )
-from lib.state import load_state, runtime_dir, workspace_dir  # noqa: E402
+from lib.state import load_state, local_runtime_dir, runtime_dir, workspace_dir  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +227,7 @@ class TodoMailHandler(BaseHTTPRequestHandler):
                 self.log_date_time_string(),
                 fmt % args,
             )
-            with open(runtime_dir() / "serve_dashboard.log", "a", encoding="utf-8") as f:
+            with open(local_runtime_dir() / "serve_dashboard.log", "a", encoding="utf-8") as f:
                 f.write(line)
         except Exception:
             pass
@@ -379,19 +379,19 @@ class TodoMailHandler(BaseHTTPRequestHandler):
     # =======================================================================
 
     def _serve_dashboard_html(self) -> None:
-        # On sert la copie du PLUGIN (alignee sur la version installee qui
-        # execute ce serveur), pas la copie a la racine du workspace : cette
-        # derniere peut etre perimee (posee par un ancien /start anterieur au
-        # mode serveur), ce qui ferait servir une vieille page File System
-        # Access (bouton « Ouvrir Projet » + picker) inutilisable a distance.
-        # Fallback sur la copie workspace si la copie plugin est introuvable.
+        # On sert EXCLUSIVEMENT la copie du PLUGIN (alignee sur la version
+        # installee qui execute ce serveur). Depuis la v2.3.0, plus aucun
+        # fallback sur une copie workspace : /start ne la copie plus et
+        # supprime une copie heritee eventuelle.
         plugin_copy = _PLUGIN_DIR / "skills" / "dashboard.html"
         if plugin_copy.is_file():
             return self._send_bytes(plugin_copy.read_bytes(), "text/html; charset=utf-8")
-        ws_copy = self.safe_resolve("dashboard.html")
-        if ws_copy.is_file():
-            return self._send_bytes(ws_copy.read_bytes(), "text/html; charset=utf-8")
-        self._send_error_json(404, "dashboard.html introuvable")
+        self._send_error_json(
+            500,
+            "dashboard.html introuvable dans le plugin "
+            f"({plugin_copy}) — installation du plugin corrompue ou incomplète, "
+            "réinstaller/mettre à jour le plugin todomail puis relancer le serveur",
+        )
 
     def _api_poll(self) -> None:
         state = load_state()
@@ -687,8 +687,10 @@ def build_config(require_auth: bool) -> ServerConfig:
         if missing:
             raise SystemExit(
                 "ERREUR: configuration Cloudflare Access incomplete "
-                f"(manquant: {', '.join(missing)}). Lance /todomail:dashboard "
-                "pour la renseigner, ou utilise --no-auth pour un test local."
+                f"(manquant: {', '.join(missing)}). Cette configuration est "
+                "machine-locale (~/.config/todomail/<slug>/config.json) : lance "
+                "/todomail:dashboard SUR CE MAC pour la renseigner, ou utilise "
+                "--no-auth pour un test local."
             )
         if not _ensure_pyjwt():
             raise SystemExit(

@@ -10,7 +10,7 @@ todomail/
 ├── commands/*.md                ← commandes utilisateur (/start, /dashboard, /check-inbox, /process-todo, /briefing, /check-agenda)
 ├── agents/*.md                  ← agents autonomes (mail-prefilter)
 ├── skills/*/SKILL.md            ← skills (sort-mails, agenda, disponibilites, detection-conflits, briefing, check-agenda, memory-management, classify-attachment, read-odf)
-├── skills/dashboard.html        ← dashboard interactif (copié dans le workspace par /start, servi par lib/serve_dashboard.py depuis v2.2.0)
+├── skills/dashboard.html        ← dashboard interactif (copie unique, servie exclusivement par lib/serve_dashboard.py depuis v2.3.0)
 ├── hooks/                       ← 5 hooks Claude Code + hooks.json (session_start, enforce_classify, invalidate_dashboard_cache, inject_context, pre_compact)
 ├── lib/                         ← helpers Python (state, fs_utils, rag_cache, error_modes, config) + serve_dashboard.py (serveur HTTP du dashboard, v2.2.0)
 ├── CHANGELOG.md                 ← historique des versions
@@ -20,11 +20,21 @@ todomail/
 └── README.dashboard.md          ← documentation technique du dashboard
 ```
 
-## Runtime du plugin dans le workspace utilisateur
+## Runtime du plugin : partagé (workspace) et machine-local
 
-Depuis alpha.8 (Phase 5), tout l'état runtime pour un workspace vit dans `$CLAUDE_PROJECT_DIR/.todomail/` (state.json, memory_cache.json, invalidate.txt, hooks.log, retry_request.txt, errors_dismiss.txt, precompact_snapshot_*.json). Plus d'écritures dans `$CLAUDE_PLUGIN_DATA` côté plugin — c'était un mauvais fit pour des données spécifiques au workspace (isolation naturelle multi-workspace, plus de mirror à synchroniser).
+Depuis la v2.3.0 (Phase 8, usage multi-Mac avec workspace synchronisé iCloud), le runtime est séparé en deux niveaux :
 
-Le fichier `.todomail-config.json` (racine du workspace, géré par `/start`) stocke `expected_rag_name` pour désambiguer quand plusieurs serveurs MCP archiva sont connectés dans Claude Desktop. Vérifié en début de toutes les commandes MCP-sensibles (`/check-inbox`, `/process-todo`, `/briefing`, `/check-agenda`). Depuis la v2.2.0 (schéma v3), il stocke aussi un bloc `dashboard` (`port`, `hostname`, `team_domain`, `access_aud`) géré par `/dashboard` pour le serveur web et la validation Cloudflare Access.
+**Partagé** — suit les mails, synchronisé iCloud avec le workspace :
+- `$CLAUDE_PROJECT_DIR/.todomail/` : state.json, invalidate.txt, retry_request.txt, errors_dismiss.txt, precompact_snapshot_*.json
+- `.todomail-config.json` (racine du workspace, schéma **v4**, **aucun secret**) : `schema_version`, `expected_rag_name`, `configured_at`. Sert aussi de **marqueur de détection du workspace** pour `lib/state.py` (`workspace_dir()`, fallback cwd) — ne jamais le supprimer ni le déplacer. `expected_rag_name` désambigue quand plusieurs serveurs MCP archiva sont connectés dans Claude Desktop ; vérifié en début de toutes les commandes MCP-sensibles (`/check-inbox`, `/process-todo`, `/briefing`, `/check-agenda`).
+- les répertoires métier (`inbox/`, `todo/`, `mails/`, `docs/`, `memory/`, `to-send/`, `to-work/`, `CLAUDE.md`)
+
+**Machine-local** — propre à chaque mac, hors iCloud, dans `~/.config/todomail/<slug>/` où `<slug> = <basename du workspace>-<sha256(realpath)[:8]>` (ex. `DIRMC-3fa2b91c` ; racine surchargeable via `$TODOMAIL_CONFIG_HOME`, répertoire en mode 700) :
+- `config.json` (chmod 600) : bloc `imap` (le mot de passe Proton Bridge est différent sur chaque mac) et bloc `dashboard` (`port`, `hostname`, `team_domain`, `access_aud` — seul le mac serveur du tunnel l'a)
+- `memory_cache.json` (cache régénérable, écrit par `hooks/session_start.py`)
+- `logs/` : serve_dashboard.log, check_inbox.log, hooks.log
+
+**Règle** : tout nouveau fichier runtime doit être classé **partagé** (il suit les mails, les deux macs doivent le voir) ou **local** (il est propre à la machine : secret, log, cache régénérable). Accès via `lib/config.py` (`get_imap_config`, `get_dashboard_config`, `local_config_dir`) et `lib/state.py` (`runtime_dir()` partagé, `local_runtime_dir()` local). La migration v3 → v4 (`migrate_legacy_config`) est automatique via `/start` ; en lecture, les getters retombent sur le bloc legacy du fichier partagé tant que la migration n'a pas eu lieu (précédence local > legacy).
 
 **Ne jamais recréer `.mcp.json`** : retiré en alpha.2 car inadapté à Claude Desktop (connexions dupliquées, proxy stdio inopérant).
 

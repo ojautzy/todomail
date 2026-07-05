@@ -46,53 +46,110 @@ Lire le fichier `.todomail-config.json` à la racine du répertoire de travail a
 
 5. Confirmer à l'utilisateur : `Serveur MCP configuré pour ce workspace : <nom_choisi>`.
 
-**Note importante :** le fichier `.todomail-config.json` est local au workspace et ne doit pas être commité. Il est automatiquement géré par le plugin.
+**Note importante :** le fichier `.todomail-config.json` est local au workspace et ne doit pas être commité. Il est automatiquement géré par le plugin. Depuis la v2.3.0 (schéma v4), il ne contient **aucun secret** : les blocs `imap` et `dashboard` vivent dans la config machine-locale `~/.config/todomail/<slug>/config.json`.
 
-#### 0c. Configuration IMAP (téléchargement des mails)
+#### 0b bis. Migration de la config legacy (v3 → v4)
 
-Depuis la v2.1.0, le téléchargement des mails est pris en charge par le plugin lui-même (skill interne `fetch-imap`, plus de dépendance au tool MCP `check_inbox`). Les identifiants IMAP sont stockés dans le même fichier `.todomail-config.json`, bloc `imap`.
-
-**Cette section est idempotente :** si le bloc `imap` est déjà présent et complet (4 champs : `hostname`, `port`, `username`, `password`), ne rien demander et passer à l'Étape 1.
-
-1. Lire `.todomail-config.json` via `lib.config.load_config()` et inspecter le bloc `imap`.
-2. Si le bloc est absent ou qu'il manque un des 4 champs requis, demander à l'utilisateur via `AskUserQuestion` les valeurs suivantes (dans cet ordre) :
-   - **hostname** — serveur IMAP (valeur par défaut proposée : `127.0.0.1` pour proton-bridge local)
-   - **port** — port IMAP (valeur par défaut : `1143` pour proton-bridge ; `143` pour IMAP standard ; `993` pour IMAPS direct)
-   - **username** — adresse email du compte IMAP
-   - **password** — mot de passe IMAP (mot de passe d'application pour proton-bridge ; voir la documentation du client mail pour Gmail/Outlook/etc.)
-3. Écrire le bloc via `lib.config.save_imap_config(workspace, hostname, port, username, password)`. Cette fonction préserve `expected_rag_name`, bumpe le schéma en v2 si nécessaire, et applique `chmod 600` sur le fichier.
-4. Confirmer à l'utilisateur :
-
-```
-Configuration IMAP enregistrée dans .todomail-config.json (chmod 600).
-Test : /todomail:check-inbox
-```
-
-**Bloc Python canonique** pour cette étape :
+Après lecture de la config (0a ou 0b), appeler `migrate_legacy_config()` : si le fichier partagé contient encore un bloc `imap` et/ou `dashboard` (schéma v3), ils sont déplacés vers la config machine-locale puis purgés du fichier partagé (le local est écrit et relu AVANT la purge — jamais de perte de secret).
 
 ```bash
 python3 - <<'PY'
-import os, sys
+import os, sys, json
 plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not plugin_root:
+    raise RuntimeError("CLAUDE_PLUGIN_ROOT non defini")
 sys.path.insert(0, plugin_root)
 from lib.state import workspace_dir
-from lib.config import load_config
+from lib.config import migrate_legacy_config, local_config_path
 
 ws = workspace_dir()
-cfg = load_config(ws) or {}
-imap = cfg.get("imap") or {}
-required = {"hostname", "port", "username", "password"}
-missing = required - set(imap)
-if missing:
-    print(f"MISSING {sorted(missing)}")
-else:
-    print("OK")
+report = migrate_legacy_config(ws)
+report["local_path"] = str(local_config_path(ws))
+print(json.dumps(report, ensure_ascii=False))
 PY
 ```
 
-Si la sortie est `OK`, passer à l'Étape 1. Sinon, prompter les champs manquants puis appeler `save_imap_config`.
+- **Si `already_clean` est `true` :** rien à migrer, continuer.
+- **Sinon :** rapporter à l'utilisateur ce qui a été migré, par exemple : « bloc imap déplacé vers `~/.config/todomail/DIRMC-3fa2b91c/config.json` (le fichier partagé ne contient plus de secret). »
 
-**Avertissement sensibilité :** le fichier `.todomail-config.json` contient un mot de passe en clair. Le plugin applique `chmod 600` (accessible uniquement au propriétaire), le fichier est gitignoré par défaut dans le workspace utilisateur. Si le répertoire de travail est synchronisé dans le cloud (Dropbox, iCloud, OneDrive), le secret peut y être copié : à éviter pour des comptes sensibles, ou utiliser un mot de passe d'application dédié.
+#### 0c. Configuration IMAP (téléchargement des mails)
+
+Depuis la v2.1.0, le téléchargement des mails est pris en charge par le plugin lui-même (skill interne `fetch-imap`). Depuis la v2.3.0, les identifiants IMAP sont **machine-locaux** (`~/.config/todomail/<slug>/config.json`, chmod 600, hors iCloud) : le mot de passe IMAP généré par Proton Bridge est différent sur chaque mac.
+
+**Cette section est idempotente :** si le bloc `imap` local est complet (4 champs : `hostname`, `port`, `username`, `password`) et sans flag `migrated_from_legacy`, ne rien demander et passer à l'Étape 1.
+
+**Bloc Python canonique** pour le test :
+
+```bash
+python3 - <<'PY'
+import os, sys, json
+plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not plugin_root:
+    raise RuntimeError("CLAUDE_PLUGIN_ROOT non defini")
+sys.path.insert(0, plugin_root)
+from lib.state import workspace_dir
+from lib.config import get_imap_config
+
+imap = get_imap_config(workspace_dir()) or {}
+required = {"hostname", "port", "username", "password"}
+missing = sorted(required - set(imap))
+print(json.dumps({
+    "missing": missing,
+    "migrated_from_legacy": bool(imap.get("migrated_from_legacy")),
+}))
+PY
+```
+
+1. **Si `missing` n'est pas vide :** demander à l'utilisateur via `AskUserQuestion` les valeurs suivantes (dans cet ordre), en précisant que **le mot de passe est celui du Proton Bridge de CE mac** (Proton Mail Bridge → Paramètres du compte → mot de passe IMAP) :
+   - **hostname** — serveur IMAP (valeur par défaut proposée : `127.0.0.1` pour proton-bridge local)
+   - **port** — port IMAP (valeur par défaut : `1143` pour proton-bridge ; `143` pour IMAP standard ; `993` pour IMAPS direct)
+   - **username** — adresse email du compte IMAP
+   - **password** — mot de passe IMAP du Bridge de CE mac (STARTTLS activé par défaut)
+
+   Puis écrire via `lib.config.save_imap_config(workspace, hostname, port, username, password)` (fichier **local**, chmod 600) et confirmer :
+
+```
+Configuration IMAP enregistrée dans ~/.config/todomail/<slug>/config.json (chmod 600, propre à ce mac).
+Test : /todomail:check-inbox
+```
+
+2. **Si `missing` est vide et `migrated_from_legacy` est `false` :** passer à l'Étape 1.
+
+#### 0c bis. Confirmation d'un bloc IMAP migré
+
+Si le bloc `imap` local porte le flag `migrated_from_legacy` : le mot de passe provient de l'ancienne config partagée, configurée à l'origine sur un mac qui n'est pas forcément celui-ci (le mot de passe Proton Bridge est propre à chaque mac).
+
+1. **Test de connexion rapide (best-effort)** — tenter un LOGIN puis LOGOUT IMAP :
+
+```bash
+python3 - <<'PY'
+import os, sys, imaplib, socket
+plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+sys.path.insert(0, plugin_root)
+from lib.state import workspace_dir
+from lib.config import get_imap_config
+
+imap = get_imap_config(workspace_dir())
+try:
+    conn = imaplib.IMAP4(imap["hostname"], int(imap["port"]))
+    if imap.get("use_starttls", True):
+        conn.starttls()
+    conn.login(imap["username"], imap["password"])
+    conn.logout()
+    print("LOGIN_OK")
+except imaplib.IMAP4.error as e:
+    print(f"AUTH_FAILED {e}")
+except (OSError, socket.error) as e:
+    print(f"UNREACHABLE {e}")
+PY
+```
+
+2. Selon le résultat :
+   - **`LOGIN_OK`** → le mot de passe est le bon pour ce mac : effacer le flag sans question, en réécrivant le bloc via `save_imap_config()` avec les valeurs actuelles.
+   - **`AUTH_FAILED`** → forcer la ressaisie du mot de passe (les autres champs sont proposés en défaut), puis `save_imap_config()` (qui efface le flag).
+   - **`UNREACHABLE`** (Bridge injoignable) → retomber sur la question : « Ce mot de passe IMAP provient de l'ancienne config partagée. Est-ce bien celui du Proton Bridge de CE mac ? » — s'il confirme, réécrire via `save_imap_config()` avec les valeurs actuelles (efface le flag) ; sinon, redemander le mot de passe et réécrire.
+
+**Avertissement sensibilité :** le mot de passe IMAP est stocké en clair dans `~/.config/todomail/<slug>/config.json` (répertoire 700, fichier 600, hors de tout répertoire synchronisé cloud). Depuis la v2.3.0, aucun secret ne transite plus par le workspace (potentiellement synchronisé iCloud).
 
 ### Étape 1. Vérifie l'existence des répertoires
 
@@ -112,17 +169,17 @@ Vérifie que le répertoire de travail contient les répertoires suivants :
 - `to-work/`
 - `to-brief/`
 - `docs/`
-- `.todomail/` (depuis alpha.8 — runtime du plugin pour ce workspace : state.json, memory_cache.json, invalidate.txt, hooks.log)
+- `.todomail/` (depuis alpha.8 — runtime **partagé** du plugin pour ce workspace : state.json, invalidate.txt, marqueurs. Depuis la v2.3.0, les fichiers machine-locaux — memory_cache.json, logs — vivent dans `~/.config/todomail/<slug>/`)
 
 **Si un ou plusieurs répertoires n'existent pas:** Crée tous les répertoires manquants.
 
-### Étape 1b. Vérifie la présence du dashboard
+### Étape 1b. Nettoyage de l'ancienne copie du dashboard
 
-Vérifie que le fichier `dashboard.html` existe à la racine du répertoire de travail.
+Depuis la v2.3.0, le serveur (`lib/serve_dashboard.py`) sert **exclusivement** la copie du plugin (`skills/dashboard.html`) : plus aucune copie dans le workspace.
 
-**Si `dashboard.html` n'existe pas ou si la version du plugin est plus récente :** Copie le fichier `${CLAUDE_PLUGIN_ROOT}/skills/dashboard.html` vers la racine du répertoire de travail.
+Si `dashboard.html` existe à la racine du répertoire de travail, le **supprimer** avec le message : « `dashboard.html` supprimé du workspace : copie obsolète depuis la v2.3.0, le serveur sert la copie du plugin. »
 
-Depuis la v2.2.0, le dashboard n'est plus ouvert en `file://` : il est servi par un serveur local (`lib/serve_dashboard.py`) et s'ouvre dans **tout navigateur** (Safari, Firefox, mobile) via une URL publique sécurisée par Cloudflare Access. Lancer `/todomail:dashboard` pour le démarrer. Mise en service initiale du tunnel + Access : voir `CLOUDFLARE-DASHBOARD.md`.
+Le dashboard s'ouvre dans **tout navigateur** (Safari, Firefox, mobile) via une URL publique sécurisée par Cloudflare Access. Lancer `/todomail:dashboard` pour le démarrer (sur le mac serveur). Mise en service initiale du tunnel + Access : voir `CLOUDFLARE-DASHBOARD.md`.
 
 ### Étape 2. Vérifie l'existence de la mémoire
 
@@ -136,11 +193,16 @@ Vérifie que le répertoire de travail contient :
 Si tout existait déjà :
 ```
 Le système est opérationnel.
+- Config machine-locale : ~/.config/todomail/<slug>/config.json (IMAP, dashboard, logs — propre à ce mac)
 - /todomail:dashboard pour ouvrir le dashboard (Safari, Firefox, mobile, depuis n'importe où)
 - /todomail:check-inbox pour télécharger les derniers mails et les classer
 - /todomail:process-todo pour exécuter les instructions du dashboard
 - /todomail:briefing pour préparer les réunions du jour
 - /todomail:check-agenda pour auditer la cohérence de l'agenda
+
+Rappel multi-Mac (workspace synchronisé iCloud) : relancer /todomail:start sur
+chaque mac (mot de passe Proton Bridge propre à chaque machine) ; ne JAMAIS
+lancer /check-inbox ou /process-todo simultanément sur les deux macs.
 ```
 Si le bootstrap de la mémoire n'a pas été réalisé, continue à l'étape 4.
 
@@ -253,11 +315,16 @@ Informe des résultats du bootstrap et des statistiques : nombre de lignes de CL
 
 ```
 Le système est opérationnel.
+- Config machine-locale : ~/.config/todomail/<slug>/config.json (IMAP, dashboard, logs — propre à ce mac)
 - /todomail:dashboard pour ouvrir le dashboard (Safari, Firefox, mobile, depuis n'importe où)
 - /todomail:check-inbox pour télécharger les derniers mails et les classer
 - /todomail:process-todo pour exécuter les instructions du dashboard
 - /todomail:briefing pour préparer les réunions du jour
 - /todomail:check-agenda pour auditer la cohérence de l'agenda
+
+Rappel multi-Mac (workspace synchronisé iCloud) : relancer /todomail:start sur
+chaque mac (mot de passe Proton Bridge propre à chaque machine) ; ne JAMAIS
+lancer /check-inbox ou /process-todo simultanément sur les deux macs.
 ```
 
 ## Notes
