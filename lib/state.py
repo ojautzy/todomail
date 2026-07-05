@@ -73,6 +73,25 @@ def runtime_dir() -> Path:
     return rt
 
 
+def local_runtime_dir(workspace: Path | None = None) -> Path:
+    """Repertoire des logs machine-locaux : `~/.config/todomail/<slug>/logs/`.
+
+    Depuis la v2.3.0, les logs (serve_dashboard.log, check_inbox.log,
+    hooks.log) sont propres a chaque machine et ne transitent plus par le
+    workspace (potentiellement synchronise iCloud). Cree a la volee.
+    `runtime_dir()` reste le repertoire des fichiers PARTAGES (state.json,
+    invalidate.txt, marqueurs).
+    """
+    # Import paresseux : evite un cycle config <-> state (config ne depend
+    # jamais de state, state ne charge config qu'a l'appel).
+    from lib.config import local_config_dir
+
+    ws = Path(workspace) if workspace is not None else workspace_dir()
+    logs = local_config_dir(ws) / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    return logs
+
+
 def _state_path() -> Path:
     return runtime_dir() / "state.json"
 

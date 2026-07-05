@@ -1,44 +1,62 @@
-"""Gestion du fichier .todomail-config.json (config au niveau du workspace).
+"""Gestion de la configuration TodoMail : partagée (workspace) et machine-locale.
 
-Ce fichier, situe a la racine du repertoire de travail de l'utilisateur
-(et non du plugin), stocke :
-- l'identite du serveur MCP attendu pour ce workspace (champ
-  `expected_rag_name`), pour desambiguer quand plusieurs serveurs archiva
-  MCP sont connectes simultanement dans Claude Desktop ;
-- depuis la v2.1.0, la configuration IMAP du plugin (bloc `imap`), qui
-  remplace la dependance au tool MCP `check_inbox` pour le telechargement
-  des mails ;
-- depuis la v2.2.0, la configuration du dashboard servi sur Internet
-  (bloc `dashboard` : port local, hostname public, et identifiants
-  Cloudflare Access `team_domain`/`access_aud`).
+Depuis la v2.3.0, la configuration est séparée en deux niveaux pour
+supporter un workspace synchronisé entre plusieurs macs (iCloud Drive) :
 
-Schema v2 (v2.1.0+) :
+**Fichier partagé** `.todomail-config.json` (racine du workspace, schéma v4) —
+synchronisé iCloud, ne contient AUCUN secret. Il sert aussi de marqueur de
+détection du workspace pour `lib.state.workspace_dir()` : ne jamais le
+supprimer ni le déplacer.
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 4,
   "expected_rag_name": "Archiva-Pro",
-  "configured_at": "2026-04-XX",
-  "imap": {
-    "hostname": "127.0.0.1",
-    "port": 1143,
-    "username": "user@example.com",
-    "password": "...",
-    "use_starttls": true
-  }
+  "configured_at": "2026-07-05T12:34:56+00:00"
 }
 ```
 
-Le fichier contient un mot de passe en clair ; les ecritures appliquent
-`chmod 600` (best-effort). Il est gitignore dans le workspace utilisateur
-(voir /todomail:start).
+**Fichier local** `~/.config/todomail/<slug>/config.json` (schéma local v1,
+indépendant du schéma partagé) — propre à chaque machine, hors iCloud.
+`<slug> = <basename du workspace>-<sha256(realpath)[:8]>` (ex. `DIRMC-3fa2b91c`).
+Racine surchargeable via `$TODOMAIL_CONFIG_HOME` (indispensable pour les
+tests). Répertoire en mode 0o700, fichier en 0o600.
 
-Migration transparente v1 -> v2 : un fichier `schema_version == 1` est
-accepte en lecture (retourne tel quel sans bloc `imap`). L'ecriture
-suivante (via /todomail:start etape 0c) bumpe la version en v2.
+```json
+{
+  "schema_version": 1,
+  "workspace_path": "/Users/olivier/Documents/CLAUDE-COWORK/DIRMC",
+  "imap": { "hostname": "127.0.0.1", "port": 1143, "username": "...",
+            "password": "...", "use_starttls": true },
+  "dashboard": { "port": 8770, "hostname": "todomail.jautzy.com",
+                 "team_domain": "...", "access_aud": "..." }
+}
+```
+
+`workspace_path` est purement informatif (debug humain). Les blocs `imap`
+et `dashboard` sont chacun optionnels (le mac non-serveur du dashboard n'a
+pas de bloc `dashboard`).
+
+Pourquoi ce split : le mot de passe IMAP est généré par le Proton Bridge de
+CHAQUE mac (valeurs différentes par machine) — le stocker dans le fichier
+partagé faisait transiter un secret par iCloud et écraser le mot de passe
+d'un mac par celui de l'autre. Le bloc `dashboard` ne concerne que le mac
+qui héberge le tunnel cloudflared.
+
+Migration v3 → v4 : `migrate_legacy_config()` déplace les blocs `imap` /
+`dashboard` du fichier partagé vers le fichier local (idempotent, le local
+existant gagne en cas de conflit), puis purge le partagé. Un bloc `imap`
+migré est tagué `migrated_from_legacy: true` : le mot de passe legacy
+provient du mac qui l'avait configuré à l'origine, pas forcément de la
+machine courante — `/todomail:start` demande confirmation avant d'effacer
+le flag. Tant que la migration n'a pas eu lieu, `get_imap_config()` et
+`get_dashboard_config()` retombent sur le bloc legacy du fichier partagé
+(précédence : local > legacy partagé) avec un avertissement sur stderr.
 """
 
-import json
+import hashlib
+import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -47,25 +65,42 @@ from lib.fs_utils import atomic_read_json, atomic_write_json, chmod_600
 
 
 CONFIG_FILENAME = ".todomail-config.json"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+LOCAL_SCHEMA_VERSION = 1
+LOCAL_CONFIG_FILENAME = "config.json"
 
+
+# ---------------------------------------------------------------------------
+# Fichier partagé (workspace, sync iCloud)
+# ---------------------------------------------------------------------------
 
 def config_path(workspace: Path) -> Path:
-    """Return the path to the config file in a workspace directory."""
+    """Return the path to the shared config file in a workspace directory."""
     return Path(workspace) / CONFIG_FILENAME
 
 
 def load_config(workspace: Path) -> dict | None:
-    """Load the workspace config, returning None if absent.
+    """Load the workspace config as a merged view (shared + local blocks).
 
-    Accepts both schema v1 (no `imap` block) and v2 (with `imap` block).
-    Callers that need the IMAP config must check `cfg.get("imap")`.
+    Returns None if the shared file is absent (unchanged semantics : the
+    shared file is the workspace marker). When present, the `imap` and
+    `dashboard` blocks of the LOCAL machine config are overlaid on top of
+    any legacy blocks still in the shared file (precedence: local > legacy).
+    Existing callers keep working without change.
     """
-    return atomic_read_json(config_path(workspace))
+    shared = atomic_read_json(config_path(workspace))
+    if shared is None:
+        return None
+    local = load_local_config(workspace) or {}
+    merged = dict(shared)
+    for key in ("imap", "dashboard"):
+        if key in local:
+            merged[key] = local[key]
+    return merged
 
 
 def _write_config(workspace: Path, data: dict) -> dict:
-    """Internal: write the full config dict atomically and chmod 600."""
+    """Internal: write the full shared config dict atomically and chmod 600."""
     path = config_path(workspace)
     atomic_write_json(path, data)
     chmod_600(path)
@@ -73,24 +108,106 @@ def _write_config(workspace: Path, data: dict) -> dict:
 
 
 def save_config(workspace: Path, expected_rag_name: str) -> dict:
-    """Create or update the workspace config with the expected rag_name.
+    """Create or update the shared workspace config (schema v4, no secrets).
 
-    Preserves existing fields (notably `imap`) if the file already exists.
-    Writes in schema v2 and sets 0o600 permissions on the file.
+    If legacy `imap`/`dashboard` blocks are still present in the shared
+    file, `migrate_legacy_config()` is called first (they move to the
+    local machine config and are purged from the shared file).
 
-    Returns the saved config dict.
+    Returns the saved shared config dict.
     """
-    existing = load_config(workspace) or {}
+    migrate_legacy_config(workspace)
+    existing = atomic_read_json(config_path(workspace)) or {}
     data: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "expected_rag_name": expected_rag_name,
         "configured_at": datetime.now(timezone.utc).isoformat(),
     }
-    if "imap" in existing:
-        data["imap"] = existing["imap"]
-    if "dashboard" in existing:
-        data["dashboard"] = existing["dashboard"]
+    # Préserve d'éventuels champs partagés additionnels (hors secrets)
+    for key, value in existing.items():
+        if key not in data and key not in ("imap", "dashboard"):
+            data[key] = value
     return _write_config(workspace, data)
+
+
+def check_rag_name(workspace: Path, actual_rag_name: str) -> tuple[bool, str | None]:
+    """Verify that actual_rag_name matches the expected one (shared file).
+
+    Returns (ok, expected):
+    - ok = True and expected = None if the config is missing (caller should handle)
+    - ok = True and expected = <name> if the actual matches the expected
+    - ok = False and expected = <name> if there is a mismatch
+    """
+    cfg = atomic_read_json(config_path(workspace))
+    if cfg is None:
+        return True, None
+    expected = cfg.get("expected_rag_name")
+    if expected is None:
+        return True, None
+    return actual_rag_name == expected, expected
+
+
+# ---------------------------------------------------------------------------
+# Fichier local (machine, hors iCloud)
+# ---------------------------------------------------------------------------
+
+def local_config_home() -> Path:
+    """Racine des configs machine-locales.
+
+    `$TODOMAIL_CONFIG_HOME` si défini (tests), sinon `~/.config/todomail`.
+    """
+    env = os.environ.get("TODOMAIL_CONFIG_HOME")
+    if env:
+        return Path(env)
+    return Path.home() / ".config" / "todomail"
+
+
+def workspace_slug(workspace: Path) -> str:
+    """Slug stable et unique par workspace : `<basename>-<sha256(realpath)[:8]>`.
+
+    Le hash du realpath distingue deux workspaces de même basename ; le
+    basename garde le répertoire lisible pour un humain (ex. `DIRMC-3fa2b91c`).
+    """
+    real = Path(workspace).resolve()
+    digest = hashlib.sha256(str(real).encode("utf-8")).hexdigest()[:8]
+    return f"{real.name}-{digest}"
+
+
+def local_config_dir(workspace: Path) -> Path:
+    """Répertoire local de la machine pour ce workspace (créé, mode 0o700)."""
+    d = local_config_home() / workspace_slug(workspace)
+    d.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(d, 0o700)
+    except (OSError, NotImplementedError):
+        pass
+    return d
+
+
+def local_config_path(workspace: Path) -> Path:
+    """Chemin du `config.json` local de la machine pour ce workspace."""
+    return local_config_dir(workspace) / LOCAL_CONFIG_FILENAME
+
+
+def load_local_config(workspace: Path) -> dict | None:
+    """Charge le config.json local de la machine, None si absent."""
+    return atomic_read_json(local_config_path(workspace))
+
+
+def _write_local_config(workspace: Path, data: dict) -> dict:
+    """Internal: write the local machine config atomically and chmod 600."""
+    path = local_config_path(workspace)
+    atomic_write_json(path, data)
+    chmod_600(path)
+    return data
+
+
+def _local_base(workspace: Path) -> dict:
+    """Socle d'un config.json local neuf (schéma + chemin informatif)."""
+    return {
+        "schema_version": LOCAL_SCHEMA_VERSION,
+        "workspace_path": str(Path(workspace).resolve()),
+    }
 
 
 def save_imap_config(
@@ -101,35 +218,25 @@ def save_imap_config(
     password: str,
     use_starttls: bool = True,
 ) -> dict:
-    """Create or update the IMAP block in the workspace config.
+    """Create or update the `imap` block in the LOCAL machine config.
 
-    Preserves `expected_rag_name` and `configured_at` if present. Bumps
-    the schema to v2 and sets 0o600 permissions on the file.
+    N'écrit plus rien dans le fichier partagé (le mot de passe IMAP est
+    propre au Proton Bridge de chaque mac). Préserve le bloc `dashboard`
+    local existant. Réécrit le bloc `imap` à neuf : un éventuel flag
+    `migrated_from_legacy` est donc effacé. Fichier en 0o600.
 
-    Returns the saved config dict.
+    Returns the saved local config dict.
     """
-    existing = load_config(workspace) or {}
-    data: dict[str, Any] = {
-        "schema_version": SCHEMA_VERSION,
-        "expected_rag_name": existing.get("expected_rag_name"),
-        "configured_at": existing.get(
-            "configured_at",
-            datetime.now(timezone.utc).isoformat(),
-        ),
-        "imap": {
-            "hostname": hostname,
-            "port": int(port),
-            "username": username,
-            "password": password,
-            "use_starttls": bool(use_starttls),
-        },
+    existing = load_local_config(workspace) or _local_base(workspace)
+    existing["schema_version"] = LOCAL_SCHEMA_VERSION
+    existing["imap"] = {
+        "hostname": hostname,
+        "port": int(port),
+        "username": username,
+        "password": password,
+        "use_starttls": bool(use_starttls),
     }
-    if "dashboard" in existing:
-        data["dashboard"] = existing["dashboard"]
-    # Drop a None expected_rag_name to keep JSON tidy if never configured
-    if data["expected_rag_name"] is None:
-        del data["expected_rag_name"]
-    return _write_config(workspace, data)
+    return _write_local_config(workspace, existing)
 
 
 def save_dashboard_config(
@@ -139,62 +246,118 @@ def save_dashboard_config(
     team_domain: str | None = None,
     access_aud: str | None = None,
 ) -> dict:
-    """Create or update the `dashboard` block in the workspace config.
+    """Create or update the `dashboard` block in the LOCAL machine config.
 
-    Stores the parameters needed by `lib.serve_dashboard` and the
-    `/todomail:dashboard` command : local port, public hostname, and the
-    Cloudflare Access identifiers (`team_domain`, `access_aud`) used to
-    validate the JWT. Preserves `expected_rag_name` and `imap` if present.
-    Bumps the schema to v3 and applies 0o600 permissions.
+    Cette config est propre au mac qui héberge le serveur du dashboard et
+    le tunnel cloudflared — elle ne transite plus par le workspace iCloud.
+    Préserve le bloc `imap` local existant. Fichier en 0o600.
 
-    Returns the saved config dict.
+    Returns the saved local config dict.
     """
-    existing = load_config(workspace) or {}
-    data: dict[str, Any] = {
-        "schema_version": SCHEMA_VERSION,
-        "expected_rag_name": existing.get("expected_rag_name"),
-        "configured_at": existing.get(
-            "configured_at",
-            datetime.now(timezone.utc).isoformat(),
-        ),
-        "dashboard": {
-            "port": int(port),
-            "hostname": hostname,
-            "team_domain": team_domain,
-            "access_aud": access_aud,
-        },
+    existing = load_local_config(workspace) or _local_base(workspace)
+    existing["schema_version"] = LOCAL_SCHEMA_VERSION
+    existing["dashboard"] = {
+        "port": int(port),
+        "hostname": hostname,
+        "team_domain": team_domain,
+        "access_aud": access_aud,
     }
-    if "imap" in existing:
-        data["imap"] = existing["imap"]
-    if data["expected_rag_name"] is None:
-        del data["expected_rag_name"]
-    return _write_config(workspace, data)
+    return _write_local_config(workspace, existing)
+
+
+def _warn_legacy(block: str) -> None:
+    print(
+        f"[todomail] AVERTISSEMENT : bloc {block} legacy détecté dans "
+        f"{CONFIG_FILENAME} — lance /todomail:start pour migrer vers la "
+        "config machine-locale.",
+        file=sys.stderr,
+    )
+
+
+def get_imap_config(workspace: Path) -> dict | None:
+    """Bloc `imap` : config locale d'abord, fallback legacy partagé.
+
+    Le fallback (fichier partagé v3 non migré) émet un avertissement sur
+    stderr invitant à lancer /todomail:start. Retourne None si aucun bloc.
+    """
+    local = load_local_config(workspace)
+    if local and local.get("imap"):
+        return local["imap"]
+    shared = atomic_read_json(config_path(workspace))
+    if shared and shared.get("imap"):
+        _warn_legacy("imap")
+        return shared["imap"]
+    return None
 
 
 def get_dashboard_config(workspace: Path) -> dict | None:
-    """Return the `dashboard` block of the workspace config, or None.
+    """Bloc `dashboard` : config locale d'abord, fallback legacy partagé.
 
-    Convenience reader used by `lib.serve_dashboard` (resolves the
-    Cloudflare Access parameters) and by `/todomail:dashboard`.
+    Utilisé par `lib.serve_dashboard` et `/todomail:dashboard`. Même
+    avertissement stderr que `get_imap_config` en cas de fallback legacy.
     """
-    cfg = load_config(workspace)
-    if cfg is None:
-        return None
-    return cfg.get("dashboard")
+    local = load_local_config(workspace)
+    if local and local.get("dashboard"):
+        return local["dashboard"]
+    shared = atomic_read_json(config_path(workspace))
+    if shared and shared.get("dashboard"):
+        _warn_legacy("dashboard")
+        return shared["dashboard"]
+    return None
 
 
-def check_rag_name(workspace: Path, actual_rag_name: str) -> tuple[bool, str | None]:
-    """Verify that actual_rag_name matches the expected one.
+# ---------------------------------------------------------------------------
+# Migration v3 -> v4
+# ---------------------------------------------------------------------------
 
-    Returns (ok, expected):
-    - ok = True and expected = None if the config is missing (caller should handle)
-    - ok = True and expected = <name> if the actual matches the expected
-    - ok = False and expected = <name> if there is a mismatch
+def migrate_legacy_config(workspace: Path) -> dict:
+    """Migre les blocs `imap`/`dashboard` du fichier partagé vers le local.
+
+    Idempotente. Ordre atomique impératif : le fichier LOCAL est écrit et
+    relu avec succès AVANT la purge du partagé (jamais de perte de secret
+    en cas d'interruption). En cas de conflit, le bloc LOCAL existant gagne
+    (le mot de passe Proton Bridge de CETTE machine est le bon) — le bloc
+    legacy est alors simplement purgé du partagé.
+
+    Un bloc `imap` copié depuis le legacy est tagué
+    `migrated_from_legacy: true` : le mot de passe provient du mac qui
+    l'avait configuré à l'origine, pas forcément de la machine qui exécute
+    la migration. `/todomail:start` (étape 0c bis) demande confirmation
+    puis efface le flag (ou force la ressaisie via `save_imap_config`).
+
+    Retourne un rapport `{"migrated": [...], "already_clean": bool}` où
+    `migrated` liste les blocs effectivement copiés dans le fichier local.
     """
-    cfg = load_config(workspace)
-    if cfg is None:
-        return True, None
-    expected = cfg.get("expected_rag_name")
-    if expected is None:
-        return True, None
-    return actual_rag_name == expected, expected
+    shared = atomic_read_json(config_path(workspace))
+    if not shared:
+        return {"migrated": [], "already_clean": True}
+    legacy_keys = [k for k in ("imap", "dashboard") if k in shared]
+    if not legacy_keys:
+        return {"migrated": [], "already_clean": True}
+
+    local = load_local_config(workspace) or _local_base(workspace)
+    local["schema_version"] = LOCAL_SCHEMA_VERSION
+    migrated: list[str] = []
+    for key in legacy_keys:
+        if key in local:
+            continue  # le local existant gagne
+        block = dict(shared[key])
+        if key == "imap":
+            block["migrated_from_legacy"] = True
+        local[key] = block
+        migrated.append(key)
+
+    # 1) Écriture locale + relecture de contrôle AVANT toute purge
+    _write_local_config(workspace, local)
+    reread = load_local_config(workspace)
+    if reread is None or any(k not in reread for k in legacy_keys):
+        raise RuntimeError(
+            "migration interrompue : relecture du fichier local échouée, "
+            "le fichier partagé n'a PAS été purgé"
+        )
+
+    # 2) Purge du partagé (bump v4)
+    purged = {k: v for k, v in shared.items() if k not in ("imap", "dashboard")}
+    purged["schema_version"] = SCHEMA_VERSION
+    _write_config(workspace, purged)
+    return {"migrated": migrated, "already_clean": False}
