@@ -73,8 +73,10 @@ donc pas à la refaire.
 ## Étape 1 — Téléchargement des mails (sautée si `--retry`)
 
 Depuis la v2.1.0, le téléchargement IMAP est pris en charge par le skill
-interne `fetch-imap` (plugin-local, aucune dépendance au serveur MCP). La
-configuration IMAP est lue dans le bloc `imap` de `.todomail-config.json`.
+interne `fetch-imap` (plugin-local, aucune dépendance au serveur MCP). Depuis
+la v2.3.0, la configuration IMAP est **machine-locale**
+(`~/.config/todomail/<slug>/config.json`, lue via `get_imap_config()` avec
+fallback legacy sur `.todomail-config.json` non migré).
 Chaque mail est placé dans un sous-répertoire de `inbox/` dont le nom est
 l'horodate du mail. Le sous-répertoire contient :
 - le mail au format EML (`message.eml`)
@@ -83,12 +85,13 @@ l'horodate du mail. Le sous-répertoire contient :
 
 ### 1a. Vérification de la configuration IMAP
 
-Lire le bloc `imap` de `.todomail-config.json`. S'il est absent ou incomplet :
+Lire le bloc `imap` via `lib.config.get_imap_config(workspace)` (config
+machine-locale, fallback legacy). S'il est absent ou incomplet :
 
 > **ARRÊT OBLIGATOIRE — Configuration IMAP manquante**
-> « Le bloc `imap` est absent de `.todomail-config.json`. Lancer
-> `/todomail:start` pour configurer les identifiants IMAP (hostname, port,
-> username, password), puis relancer `/todomail:check-inbox`. »
+> « Config IMAP absente sur cette machine — lance `/todomail:start` (le mot
+> de passe Proton Bridge est propre à chaque mac), puis relance
+> `/todomail:check-inbox`. »
 
 ### 1b. Exécution du téléchargement
 
@@ -105,19 +108,20 @@ sys.path.insert(0, plugin_root)
 sys.path.insert(0, os.path.join(plugin_root, "skills", "fetch-imap", "scripts"))
 
 from lib.state import (
-    acquire_lock, release_lock, update_checkpoint, record_error, workspace_dir,
+    acquire_lock, release_lock, update_checkpoint, record_error,
+    workspace_dir, local_runtime_dir,
 )
-from lib.config import load_config
+from lib.config import get_imap_config
 from imap_fetch import fetch_inbox, ImapConfig
 
 ws = workspace_dir()
-cfg = load_config(ws)
-imap_block = (cfg or {}).get("imap") or {}
+imap_block = get_imap_config(ws) or {}
 required = {"hostname", "port", "username", "password"}
 missing = required - set(imap_block)
 if missing:
-    print(f"ERROR: bloc imap incomplet (manquants: {sorted(missing)}) — "
-          f"relance /todomail:start")
+    print(f"ERROR: config IMAP absente ou incomplete sur cette machine "
+          f"(manquants: {sorted(missing)}) — lance /todomail:start "
+          f"(le mot de passe Proton Bridge est propre a chaque mac)")
     sys.exit(2)
 
 if not acquire_lock("check-inbox:fetch"):
@@ -133,7 +137,7 @@ try:
         password=imap_block["password"],
         use_starttls=bool(imap_block.get("use_starttls", True)),
     )
-    report = fetch_inbox(ws / "inbox", imap_cfg)
+    report = fetch_inbox(ws / "inbox", imap_cfg, log_dir=local_runtime_dir(ws))
     if report.success:
         update_checkpoint(
             "check-inbox:fetch", "ok",

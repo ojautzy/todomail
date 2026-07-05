@@ -90,8 +90,8 @@ Cette vérification est **obligatoire** et s'exécute **avant** toute autre
 > le cycle en temps réel dans son dashboard.
 
 1. `Read` de `CLAUDE.md` et `memory/*` (utiliser en priorité le cache compilé
-   par `hooks/session_start.py` dans `.todomail/memory_cache.json` quand il
-   est disponible).
+   par `hooks/session_start.py` dans `~/.config/todomail/<slug>/memory_cache.json`
+   — machine-local depuis la v2.3.0 ; chemin via `lib.config.local_config_dir()`).
 2. Bloc d'initialisation Python obligatoire :
 
 ```bash

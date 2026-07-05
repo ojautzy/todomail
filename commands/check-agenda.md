@@ -86,7 +86,8 @@ Cette vérification est **obligatoire** et s'exécute **avant** toute autre
 > cycle et `state.json.checkpoints` ne trace rien.
 
 1. `Read` de `CLAUDE.md` et `memory/*` (cache compilé disponible dans
-   `.todomail/memory_cache.json` via `hooks/session_start.py`).
+   `~/.config/todomail/<slug>/memory_cache.json` via `hooks/session_start.py`
+   — machine-local depuis la v2.3.0 ; chemin via `lib.config.local_config_dir()`).
 2. Bloc d'initialisation Python obligatoire :
 
 ```bash
