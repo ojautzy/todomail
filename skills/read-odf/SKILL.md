@@ -26,7 +26,7 @@ Les cas typiques :
 Invoquer via Bash :
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/skills/read-odf/scripts/read_odf.py" "<chemin_du_fichier>"
+python3 "$(todomail-plugin-root)/skills/read-odf/scripts/read_odf.py" "<chemin_du_fichier>"
 ```
 
 Le texte extrait est affiché sur stdout. Les erreurs sont affichées sur stderr.

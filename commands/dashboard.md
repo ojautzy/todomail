@@ -11,14 +11,19 @@ allowed-tools: Read, Bash(python3:*), Bash(nohup:*), Bash(lsof:*), Bash(curl:*),
 
 ## Préambule — import des helpers lib/
 
-Tout bloc Python qui importe `lib.*` doit résoudre `CLAUDE_PLUGIN_ROOT` côté Python (cf. CLAUDE.md) :
+Tout bloc Python qui importe `lib.*` résout la racine du plugin via l'exécutable `todomail-plugin-root` (répertoire `bin/` du plugin, sur le PATH du tool Bash — `CLAUDE_PLUGIN_ROOT` n'est jamais exporté aux sous-processus Bash ; cf. CLAUDE.md) :
 
 ```bash
 python3 - <<'PY'
 import os, sys
 plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
 if not plugin_root:
-    raise RuntimeError("CLAUDE_PLUGIN_ROOT non defini")
+    import shutil
+    exe = shutil.which("todomail-plugin-root")
+    if exe:
+        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
+if not plugin_root:
+    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
 sys.path.insert(0, plugin_root)
 from lib.state import workspace_dir
 from lib.config import get_dashboard_config, save_dashboard_config
@@ -36,6 +41,13 @@ Depuis la v2.3.0, le bloc `dashboard` est **machine-local** (`~/.config/todomail
 python3 - <<'PY'
 import os, sys, json
 plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not plugin_root:
+    import shutil
+    exe = shutil.which("todomail-plugin-root")
+    if exe:
+        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
+if not plugin_root:
+    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
 sys.path.insert(0, plugin_root)
 from lib.state import workspace_dir
 from lib.config import get_dashboard_config
@@ -60,6 +72,13 @@ PY
 python3 - <<'PY'
 import os, sys
 plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not plugin_root:
+    import shutil
+    exe = shutil.which("todomail-plugin-root")
+    if exe:
+        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
+if not plugin_root:
+    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
 sys.path.insert(0, plugin_root)
 from lib.state import workspace_dir
 from lib.config import save_dashboard_config, local_config_path
@@ -102,6 +121,13 @@ Le log est machine-local (`~/.config/todomail/<slug>/logs/serve_dashboard.log`).
 LOG_FILE="$(python3 - <<'PY'
 import os, sys
 plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not plugin_root:
+    import shutil
+    exe = shutil.which("todomail-plugin-root")
+    if exe:
+        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
+if not plugin_root:
+    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
 sys.path.insert(0, plugin_root)
 from lib.state import local_runtime_dir
 print(local_runtime_dir() / "serve_dashboard.log")
@@ -113,9 +139,9 @@ echo "$LOG_FILE"
 Puis lancer le serveur en arrière-plan, détaché de la session Claude (survit à la fermeture de Claude Code) :
 
 ```bash
-PORT=8770   # port configuré
-cd "$CLAUDE_PROJECT_DIR"
-PYTHONPATH="$CLAUDE_PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$CLAUDE_PROJECT_DIR" \
+PORT=8770   # port configuré — lancer depuis le workspace (le serveur résout workspace_dir() via le cwd)
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(todomail-plugin-root)}"
+PYTHONPATH="$PLUGIN_ROOT" \
   nohup python3 -m lib.serve_dashboard --port $PORT \
   >> "$LOG_FILE" 2>&1 &
 disown

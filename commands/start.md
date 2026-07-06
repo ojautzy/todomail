@@ -57,7 +57,12 @@ python3 - <<'PY'
 import os, sys, json
 plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
 if not plugin_root:
-    raise RuntimeError("CLAUDE_PLUGIN_ROOT non defini")
+    import shutil
+    exe = shutil.which("todomail-plugin-root")
+    if exe:
+        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
+if not plugin_root:
+    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
 sys.path.insert(0, plugin_root)
 from lib.state import workspace_dir
 from lib.config import migrate_legacy_config, local_config_path
@@ -85,7 +90,12 @@ python3 - <<'PY'
 import os, sys, json
 plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
 if not plugin_root:
-    raise RuntimeError("CLAUDE_PLUGIN_ROOT non defini")
+    import shutil
+    exe = shutil.which("todomail-plugin-root")
+    if exe:
+        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
+if not plugin_root:
+    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
 sys.path.insert(0, plugin_root)
 from lib.state import workspace_dir
 from lib.config import get_imap_config
@@ -125,6 +135,13 @@ Si le bloc `imap` local porte le flag `migrated_from_legacy` : le mot de passe p
 python3 - <<'PY'
 import os, sys, imaplib, socket
 plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not plugin_root:
+    import shutil
+    exe = shutil.which("todomail-plugin-root")
+    if exe:
+        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
+if not plugin_root:
+    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
 sys.path.insert(0, plugin_root)
 from lib.state import workspace_dir
 from lib.config import get_imap_config

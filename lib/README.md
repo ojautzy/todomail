@@ -12,16 +12,22 @@ Depuis la racine du plugin :
 python3 -c "from lib import state, fs_utils, rag_cache, error_modes, config; print('OK')"
 ```
 
-Depuis un skill ou une commande (preambule PYTHONPATH obligatoire — la
-substitution shell de `${CLAUDE_PLUGIN_ROOT}` n'est pas fiable dans tous
-les contextes d'execution) :
+Depuis un skill ou une commande (preambule obligatoire — la racine du
+plugin se resout via l'executable `todomail-plugin-root` du repertoire
+`bin/`, sur le PATH du tool Bash ; `CLAUDE_PLUGIN_ROOT` n'est jamais
+exporte aux sous-processus Bash) :
 
 ```bash
 python3 - <<'PY'
 import sys, os
 plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
 if not plugin_root:
-    raise RuntimeError("CLAUDE_PLUGIN_ROOT non defini")
+    import shutil
+    exe = shutil.which("todomail-plugin-root")
+    if exe:
+        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
+if not plugin_root:
+    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
 sys.path.insert(0, plugin_root)
 from lib.state import load_state, acquire_lock, release_lock, update_checkpoint
 from lib.rag_cache import RagCache

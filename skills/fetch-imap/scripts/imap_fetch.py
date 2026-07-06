@@ -500,17 +500,20 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    # Import tardif : la CLI n'est appelée que depuis le plugin avec CLAUDE_PLUGIN_ROOT défini
-    import os
-    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-    if plugin_root and plugin_root not in sys.path:
+    # Import tardif : racine du plugin déduite de ce fichier
+    # (<racine>/skills/fetch-imap/scripts/imap_fetch.py), sans dépendre de
+    # l'environnement — CLAUDE_PLUGIN_ROOT n'est jamais exporté aux
+    # sous-processus Bash (docs plugins, § Environment variables).
+    plugin_root = str(Path(__file__).resolve().parents[3])
+    if plugin_root not in sys.path:
         sys.path.insert(0, plugin_root)
 
     try:
         from lib.state import local_runtime_dir, workspace_dir
         from lib.config import get_imap_config
     except ImportError as e:
-        print(f"ERROR: impossible d'importer lib.* — CLAUDE_PLUGIN_ROOT non défini ? {e}",
+        print(f"ERROR: impossible d'importer lib.* depuis {plugin_root} — "
+              f"installation du plugin incomplète ? {e}",
               file=sys.stderr)
         return 1
 
