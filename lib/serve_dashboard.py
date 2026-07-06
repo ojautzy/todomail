@@ -39,17 +39,16 @@ import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
-
-# Acces aux helpers lib/ (resolution cote Python, cf. CLAUDE.md)
-_PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT")
-if _PLUGIN_ROOT and _PLUGIN_ROOT not in sys.path:
-    sys.path.insert(0, _PLUGIN_ROOT)
+from urllib.parse import quote, unquote, urlsplit
 
 # Racine du plugin deduite du fichier lui-meme (lib/serve_dashboard.py ->
-# <plugin>) : robuste meme si CLAUDE_PLUGIN_ROOT n'est pas dans l'env du
-# process serveur. Sert a localiser la copie canonique de dashboard.html.
+# <plugin>). CLAUDE_PLUGIN_ROOT n'est exporte qu'aux hooks et serveurs
+# MCP/LSP, jamais aux sous-processus Bash (docs plugins, § Environment
+# variables) : l'auto-resolution rend le serveur lancable sans PYTHONPATH.
+# Sert aussi a localiser la copie canonique de dashboard.html.
 _PLUGIN_DIR = Path(__file__).resolve().parent.parent
+if str(_PLUGIN_DIR) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_DIR))
 
 from lib.config import get_dashboard_config  # noqa: E402
 from lib.fs_utils import (  # noqa: E402
@@ -77,7 +76,6 @@ CATEGORIES = {
     "do-self",
 }
 MEMORY_SECTIONS = {"people", "projects", "context"}
-_SEGMENT_OK = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 
 
 # ---------------------------------------------------------------------------
@@ -114,10 +112,48 @@ class ServerConfig:
 
 
 def _segment_ok(seg: str) -> bool:
-    """Un segment de chemin sain : non vide, pas '..', allowlist stricte."""
+    """Un segment de chemin sain : non vide, ni '.' ni '..', sans separateur
+    ni caractere de controle.
+
+    Denylist volontairement minimale : les noms de fichiers reels (pieces
+    jointes MIME-decodees) contiennent espaces, accents, apostrophes,
+    parentheses... La frontiere de securite n'est pas ici mais dans le
+    confinement realpath de `safe_resolve` (aucune evasion du workspace).
+    """
     if not seg or seg == "." or seg == "..":
         return False
-    return all(c in _SEGMENT_OK for c in seg)
+    if "/" in seg or "\\" in seg:
+        return False
+    return not any(ord(c) < 32 or ord(c) == 127 for c in seg)
+
+
+def resolve_under(root: Path, *parts: str) -> Path:
+    """Resout un chemin sous `root`, en rejetant toute evasion.
+
+    - chaque segment passe la garde `_segment_ok` ;
+    - le chemin final est resolu via realpath (suit `..`/symlinks) puis
+      verifie comme strictement contenu dans `root`.
+    """
+    for p in parts:
+        if not _segment_ok(p):
+            raise PermissionError(f"segment invalide: {p!r}")
+    cand = root.joinpath(*parts).resolve()
+    if cand != root and root not in cand.parents:
+        raise PermissionError("chemin hors workspace")
+    return cand
+
+
+def content_disposition(filename: str) -> str:
+    """Valeur `Content-Disposition` 100 % ASCII pour un nom arbitraire.
+
+    `http.server` encode les headers en latin-1 : un nom contenant un
+    caractere hors latin-1 (tiret demi-cadratin, oe lie...) ferait crasher
+    la reponse. Forme RFC 5987 `filename*` pour le nom exact + fallback
+    ASCII assaini (guillemets/antislash neutralises) pour `filename`.
+    """
+    fallback = filename.encode("ascii", "replace").decode("ascii")
+    fallback = fallback.replace("\\", "_").replace('"', "_")
+    return f"inline; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"
 
 
 # ---------------------------------------------------------------------------
@@ -131,20 +167,9 @@ class TodoMailHandler(BaseHTTPRequestHandler):
     # --- garde anti-traversee -------------------------------------------------
 
     def safe_resolve(self, *parts: str) -> Path:
-        """Resout un chemin sous le workspace, en rejetant toute evasion.
-
-        - chaque segment passe l'allowlist (`_segment_ok`) ;
-        - le chemin final est resolu via realpath (suit `..`/symlinks) puis
-          verifie comme strictement contenu dans le workspace.
-        """
-        for p in parts:
-            if not _segment_ok(p):
-                raise PermissionError(f"segment invalide: {p!r}")
-        root = self.config.workspace
-        cand = root.joinpath(*parts).resolve()
-        if cand != root and root not in cand.parents:
-            raise PermissionError("chemin hors workspace")
-        return cand
+        """Resout un chemin sous le workspace, en rejetant toute evasion
+        (garde de segments + confinement realpath, cf. `resolve_under`)."""
+        return resolve_under(self.config.workspace, *parts)
 
     # --- helpers reponse ------------------------------------------------------
 
@@ -167,7 +192,7 @@ class TodoMailHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         if filename:
-            self.send_header("Content-Disposition", f'inline; filename="{filename}"')
+            self.send_header("Content-Disposition", content_disposition(filename))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)

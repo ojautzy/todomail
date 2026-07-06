@@ -15,17 +15,23 @@ récupère les événements, lance les recherches documentaires contextuelles
 ## Accès aux helpers Python du plugin (à lire en premier)
 
 Les modules `lib.state`, `lib.rag_cache`, `lib.config` référencés
-ci-dessous vivent à la racine du plugin, résolue via la variable
-d'environnement `CLAUDE_PLUGIN_ROOT`. La variable est récupérée **côté
-Python** (la substitution shell `${CLAUDE_PLUGIN_ROOT}` n'est pas
-fiable dans tous les contextes d'exécution) :
+ci-dessous vivent à la racine du plugin. `CLAUDE_PLUGIN_ROOT` n'est
+**jamais exporté** aux sous-processus Bash (seuls les hooks et serveurs
+MCP/LSP le reçoivent) : la racine se résout via l'exécutable
+`todomail-plugin-root` (répertoire `bin/` du plugin, présent sur le
+PATH du tool Bash tant que le plugin est actif) :
 
 ```bash
 python3 - <<'PY'
 import sys, os
 plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
 if not plugin_root:
-    raise RuntimeError("CLAUDE_PLUGIN_ROOT non defini")
+    import shutil
+    exe = shutil.which("todomail-plugin-root")
+    if exe:
+        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
+if not plugin_root:
+    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
 sys.path.insert(0, plugin_root)
 from lib.state import load_state, save_state, acquire_lock, release_lock, update_checkpoint
 from lib.rag_cache import RagCache
@@ -34,7 +40,8 @@ PY
 ```
 
 Si `ModuleNotFoundError: lib`, ne **jamais** conclure « pas de lib
-externe » — vérifier que `CLAUDE_PLUGIN_ROOT` est bien défini et
+externe » — vérifier que `todomail-plugin-root` est disponible
+(`which todomail-plugin-root` ; sinon le plugin n'est pas actif) et
 retenter. Les helpers sont indispensables : sans `acquire_lock`/
 `save_state`, le dashboard ne voit pas le cycle.
 
@@ -99,7 +106,12 @@ python3 - <<'PY'
 import sys, os
 plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
 if not plugin_root:
-    raise RuntimeError("CLAUDE_PLUGIN_ROOT non defini")
+    import shutil
+    exe = shutil.which("todomail-plugin-root")
+    if exe:
+        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
+if not plugin_root:
+    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
 sys.path.insert(0, plugin_root)
 from lib.state import load_state, acquire_lock, update_checkpoint
 from lib.rag_cache import RagCache
@@ -340,6 +352,13 @@ Bloc de finalisation Python obligatoire :
 python3 - <<'PY'
 import sys, os
 plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not plugin_root:
+    import shutil
+    exe = shutil.which("todomail-plugin-root")
+    if exe:
+        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
+if not plugin_root:
+    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
 sys.path.insert(0, plugin_root)
 from lib.state import update_checkpoint, release_lock
 

@@ -151,7 +151,14 @@ def write_json_alongside(eml_path: Path, max_body_length: int | None = None) -> 
 
 ```python
 import sys, os
-plugin_root = os.environ["CLAUDE_PLUGIN_ROOT"]
+plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not plugin_root:
+    import shutil
+    exe = shutil.which("todomail-plugin-root")
+    if exe:
+        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
+if not plugin_root:
+    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
 sys.path.insert(0, plugin_root)
 sys.path.insert(0, os.path.join(plugin_root, "skills", "fetch-imap", "scripts"))
 

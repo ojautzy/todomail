@@ -18,14 +18,19 @@ sur les évidences et cache RAG pour éviter les appels MCP redondants.
 
 Les modules `lib.state`, `lib.fs_utils`, `lib.rag_cache`, `lib.error_modes`, `lib.config` mentionnés dans ce SKILL vivent à la racine du plugin, pas dans le répertoire du skill ni dans le workspace utilisateur. Ne pas chercher `skills/sort-mails/lib/` — ce chemin n'existe pas.
 
-**Pattern canonique** pour tout bloc Bash qui importe `lib.*` — la variable est résolue **dans le Python** (la substitution `${CLAUDE_PLUGIN_ROOT}` par le shell n'est pas fiable dans tous les contextes d'exécution des skills/commandes) :
+**Pattern canonique** pour tout bloc Bash qui importe `lib.*` — la racine est résolue **dans le Python** via l'exécutable `todomail-plugin-root` (répertoire `bin/` du plugin, sur le PATH du tool Bash ; `CLAUDE_PLUGIN_ROOT` n'est jamais exporté aux sous-processus Bash) :
 
 ```bash
 python3 - <<'PY'
 import sys, os
 plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
 if not plugin_root:
-    raise RuntimeError("CLAUDE_PLUGIN_ROOT non defini — impossible de localiser les helpers lib/")
+    import shutil
+    exe = shutil.which("todomail-plugin-root")
+    if exe:
+        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
+if not plugin_root:
+    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
 sys.path.insert(0, plugin_root)
 from lib.state import load_state, save_state, acquire_lock, release_lock, update_checkpoint, record_error, get_pending_errors
 from lib.fs_utils import safe_mv, atomic_write_json, read_v2_json, write_v2_json, read_pending_emails, write_pending_emails
@@ -34,7 +39,7 @@ from lib.rag_cache import RagCache
 PY
 ```
 
-Si un `import lib.X` renvoie `ModuleNotFoundError`, ne **JAMAIS** conclure « pas de lib externe, analyse directe en flux » — c'est un bug d'import, pas une caractéristique du skill. Vérifier que `CLAUDE_PLUGIN_ROOT` est bien exporté dans l'environnement (en dernier recours, inspecter via `Bash` un `env | grep CLAUDE` pour diagnostiquer). Les helpers sont indispensables : sans `acquire_lock`/`save_state`, le dashboard n'est pas notifié du cycle et `state.json` reste incohérent.
+Si un `import lib.X` renvoie `ModuleNotFoundError`, ne **JAMAIS** conclure « pas de lib externe, analyse directe en flux » — c'est un bug d'import, pas une caractéristique du skill. Vérifier que `todomail-plugin-root` est disponible (`which todomail-plugin-root` ; sinon le plugin n'est pas actif), fixer le `sys.path` et retenter. Les helpers sont indispensables : sans `acquire_lock`/`save_state`, le dashboard n'est pas notifié du cycle et `state.json` reste incohérent.
 
 ## Vérification préalable des répertoires
 
@@ -105,7 +110,7 @@ Pour chaque mail restant dans `inbox/`, Claude lit **dans son contexte principal
 | `.pdf` | `Read` natif (multimodal) |
 | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` | `Read` natif (multimodal) |
 | `.docx`, `.xlsx`, `.pptx`, `.rtf`, `.epub` | `python3 -m markitdown "<chemin>"` |
-| `.odt`, `.ods`, `.odp` | `python3 "${CLAUDE_PLUGIN_ROOT}/skills/read-odf/scripts/read_odf.py" "<chemin>"` |
+| `.odt`, `.ods`, `.odp` | `python3 "$(todomail-plugin-root)/skills/read-odf/scripts/read_odf.py" "<chemin>"` |
 | Autres binaires | Ne pas lire. Noter « non lisible : [nom] ». |
 
 Installer `markitdown` si absent : `pip install markitdown --break-system-packages`

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Affiche la racine du plugin todomail (repertoire parent de bin/).
+#
+# Mecanisme officiel Claude Code : les executables du repertoire bin/ d'un
+# plugin sont ajoutes au PATH du tool Bash tant que le plugin est actif
+# (docs plugins, table « Plugin structure »). CLAUDE_PLUGIN_ROOT n'etant
+# exporte qu'aux hooks et serveurs MCP/LSP — jamais aux sous-processus
+# Bash —, ce script est le point de resolution canonique de la racine du
+# plugin pour tous les blocs Bash/Python des commandes et skills.
+CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P
