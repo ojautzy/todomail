@@ -7,6 +7,22 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.3.1] - 2026-07-06
+
+Deux corrections de bugs bloquants : la résolution de la racine du plugin dans les blocs Bash (toutes les commandes échouaient sur « CLAUDE_PLUGIN_ROOT non defini ») et l'ouverture des pièces jointes depuis le dashboard (« segment invalide »).
+
+### Corrigé
+
+- **Résolution de la racine du plugin (`CLAUDE_PLUGIN_ROOT`)** — la doc officielle des plugins (§ *Environment variables*) précise que `${CLAUDE_PLUGIN_ROOT}` n'est exporté comme variable d'environnement qu'aux processus hooks et serveurs MCP/LSP, **jamais aux sous-processus Bash** lancés par le LLM. Le pattern canonique (`os.environ.get("CLAUDE_PLUGIN_ROOT")` sans repli) échouait donc systématiquement dans toutes les commandes et skills. Correction via le mécanisme officiel `bin/` (les exécutables du répertoire `bin/` d'un plugin sont sur le PATH du tool Bash tant que le plugin est actif) : le pattern tente l'env var (compat) puis retombe sur `shutil.which("todomail-plugin-root")`. Mis à jour dans les 6 commandes (`check-inbox`, `process-todo`, `briefing`, `check-agenda`, `dashboard`, `start`), les skills `sort-mails`/`fetch-imap`/`read-odf` (21 blocs + 3 chemins shell), `CLAUDE.md` et `lib/README.md`.
+- **Pièces jointes du dashboard : `{"ok": false, "error": "segment invalide"}`** — la garde `_segment_ok()` de `lib/serve_dashboard.py` n'acceptait que `[a-zA-Z0-9._-]` et rejetait tout nom réel (espaces, accents, apostrophes, parenthèses…), soit la quasi-totalité des pièces jointes MIME-décodées. Remplacée par une denylist minimale (segment vide, `.`, `..`, séparateurs `/` `\`, caractères de contrôle) ; la frontière de sécurité reste le confinement realpath dans le workspace (`resolve_under`, comportement inchangé, testé). Le bug touchait aussi les documents to-work et les écritures to-send/memory à noms non-ASCII.
+- **Header `Content-Disposition` non-ASCII** (bug latent) — `http.server` encode les headers en latin-1 : un nom hors latin-1 (tiret demi-cadratin, œ…) aurait fait crasher la réponse en 500. Désormais encodé RFC 5987 (`filename*=UTF-8''…` + fallback ASCII assaini, guillemets neutralisés).
+- **`lib/serve_dashboard.py` lançable sans `PYTHONPATH`** — la racine du plugin est insérée dans `sys.path` depuis `__file__` avant les imports `lib.*` ; la CLI de `imap_fetch.py` s'auto-localise de la même façon (plus aucune dépendance à l'environnement).
+
+### Ajouté
+
+- **`bin/todomail-plugin-root`** — point de résolution canonique de la racine du plugin pour tous les blocs Bash/Python des commandes et skills.
+- **Tests `lib/tests/test_serve_dashboard_paths.py`** — 10 tests stdlib `unittest` : acceptation des noms réels, rejet des traversées (`..`, `%2F` décodé dans un segment, symlink sortant), header Content-Disposition 100 % ASCII + forme RFC 5987. Validé aussi end-to-end (serveur `--no-auth` + curl : PJ avec espaces → 200, nom hors latin-1 → 200, traversée → 403).
+
 ## [2.3.0] - 2026-07-05
 
 Configuration **machine-locale** (Phase 8) : le plugin supporte désormais un workspace synchronisé entre **deux macs par iCloud Drive**. La configuration est séparée en deux niveaux — partagée (workspace, suit les mails via iCloud) et machine-locale (`~/.config/todomail/<slug>/`, propre à chaque mac, hors iCloud). Motivation : le mot de passe IMAP généré par Proton Bridge est différent sur chaque mac (le bloc `imap` du fichier partagé faisait transiter un secret par iCloud et écraser le mot de passe d'un mac par celui de l'autre), et le dashboard n'est servi que par le mac qui héberge le tunnel cloudflared.
