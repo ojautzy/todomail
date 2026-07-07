@@ -327,8 +327,10 @@ Si et seulement si `$ARGUMENTS` contient `--batch-validate` :
 ## Étape 4 — Vérification de cohérence
 
 Pour chaque sous-répertoire de `todo/`, lire `pending_emails.json` via
-`read_pending_emails` et retirer les entrées dont le répertoire `todo/<cat>/<id>/`
-n'existe plus. Réécrire. Compter les orphelins pour le compte-rendu.
+`read_pending_emails` — **renvoie un tuple `(meta, emails)`, toujours le
+dépaqueter** (`_meta, emails = read_pending_emails(...)`) — et retirer les
+entrées dont le répertoire `todo/<cat>/<id>/` n'existe plus. Réécrire.
+Compter les orphelins pour le compte-rendu.
 
 ## Étape 5 — Consolidation `consult.md` + mémoire
 

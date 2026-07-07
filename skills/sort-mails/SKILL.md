@@ -241,12 +241,17 @@ Si `agenda-detected == true` → ajouter `agenda-info` à l'entrée.
 Pour chaque catégorie contenant de nouveaux mails :
 
 ```python
-existing = read_pending_emails(category_dir)  # lit v1 et v2
+# ATTENTION : read_pending_emails renvoie un TUPLE (meta, emails), pas une
+# liste. Toujours dépaqueter le tuple — ne JAMAIS le concaténer ni l'aplatir :
+# le bloc _meta entrerait dans la liste des mails et s'afficherait comme un
+# mail vide en tête de catégorie dans le dashboard (bug v2.3.1).
+_meta_prev, existing = read_pending_emails(category_dir)  # lit v1 et v2
 merged = dedup_by_id(existing + new_entries)
 write_pending_emails(category_dir, merged, session_id)
 ```
 
-`lib.fs_utils.write_pending_emails` produit un objet v2 avec `_meta` wrapper.
+`lib.fs_utils.write_pending_emails` produit un objet v2 avec `_meta` wrapper
+(le `_meta` n'a qu'une seule place : le wrapper, jamais la liste `emails`).
 
 Checkpoint : `update_checkpoint("sort-mails:write", "ok", {"categories": {...}})`.
 

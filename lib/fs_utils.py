@@ -104,6 +104,28 @@ def is_already_in_destination(mail_id: str, dest_dir: Path) -> bool:
 # JSON v2 schema helpers
 # ---------------------------------------------------------------------------
 
+# Cles du wrapper _meta (cf. make_meta). Un dict sans 'id' compose uniquement
+# de ces cles est un bloc _meta egare dans une liste de donnees (bug historique
+# v2.3.1 : le tuple (meta, emails) de read_pending_emails aplati dans la liste
+# des mails -> carte vide en tete de categorie dans le dashboard).
+_META_KEYS = {"schema_version", "session_id", "generated_at", "consumes_session_id"}
+
+
+def is_meta_shaped(entry: Any) -> bool:
+    """True si l'entree est un bloc _meta egare : dict sans 'id' dont toutes
+    les cles appartiennent au wrapper _meta (dict vide inclus).
+
+    Une entree metier (email, instruction) porte toujours au moins une cle
+    hors wrapper (`id`, `sender`, `action`...) et n'est jamais filtree.
+    """
+    return isinstance(entry, dict) and "id" not in entry and set(entry) <= _META_KEYS
+
+
+def _drop_meta_entries(data_list: list) -> list:
+    """Purge les blocs _meta egares d'une liste de donnees v1/v2."""
+    return [e for e in data_list if not is_meta_shaped(e)]
+
+
 def make_meta(session_id: str, consumes_session_id: str | None = None) -> dict:
     """Build a _meta wrapper for v2 JSON files."""
     meta = {
@@ -123,15 +145,21 @@ def read_v2_json(path: Path, data_key: str = "emails") -> tuple[dict | None, lis
     v1 bare array -> returns (None, array).
     v2 object     -> returns (_meta, obj[data_key]).
     Absent file   -> returns (None, []).
+
+    Defense en profondeur : les blocs _meta egares dans la liste de donnees
+    (cf. is_meta_shaped) sont filtres a la lecture — un fichier contamine
+    redevient sain sans reecriture.
     """
     raw = atomic_read_json(path)
     if raw is None:
         return None, []
     if isinstance(raw, list):
-        return None, raw
+        return None, _drop_meta_entries(raw)
     if isinstance(raw, dict):
         meta = raw.get("_meta")
         data = raw.get(data_key, [])
+        if isinstance(data, list):
+            data = _drop_meta_entries(data)
         return meta, data
     return None, []
 
@@ -143,10 +171,14 @@ def write_v2_json(
     session_id: str,
     consumes_session_id: str | None = None,
 ) -> None:
-    """Write a v2 JSON file with _meta wrapper, atomically."""
+    """Write a v2 JSON file with _meta wrapper, atomically.
+
+    Les blocs _meta egares dans data_list (cf. is_meta_shaped) sont purges
+    avant ecriture : le _meta n'a qu'une seule place, le wrapper.
+    """
     doc = {
         "_meta": make_meta(session_id, consumes_session_id),
-        data_key: data_list,
+        data_key: _drop_meta_entries(data_list),
     }
     atomic_write_json(path, doc)
 

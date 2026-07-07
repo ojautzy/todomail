@@ -7,6 +7,20 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.3.2] - 2026-07-07
+
+Correction du « mail vide » apparaissant en tête de chaque catégorie du dashboard après `/check-inbox` : le bloc `_meta` des `pending_emails.json` était fusionné dans la liste des mails par l'étape de tri.
+
+### Corrigé
+
+- **Mail fantôme en tête de catégorie dans le dashboard** — le pseudo-code de l'étape 3 de `skills/sort-mails/SKILL.md` traitait le retour de `read_pending_emails` comme une liste alors que c'est un **tuple `(meta, emails)`** ; le LLM exécutant le skill « réparait » le `TypeError` de concaténation en aplatissant le tuple, injectant le bloc `_meta` de l'ancien fichier comme premier « mail » (sans `sender` ni `date` → carte vide). Le fantôme se propageait ensuite dans `instructions.json` (instruction `{"action": ...}` sans `id`). Bug latent depuis la phase 2, révélé par la v2.3.1 qui a fiabilisé les imports `lib.*` (avant, l'import échouait et le JSON était écrit à la main). Le snippet dépaquette désormais explicitement le tuple, avec avertissement ; note analogue à l'étape 4 de `commands/process-todo.md`.
+- **Défense en profondeur dans `lib/fs_utils.py`** — nouveau prédicat `is_meta_shaped()` (dict sans `id` dont les clés appartiennent au wrapper `_meta`) ; `read_v2_json` filtre les blocs `_meta` égarés à la lecture (un fichier contaminé redevient sain sans réécriture, dashboard inclus) et `write_v2_json` les purge à l'écriture. Les entrées métier (`id`, `sender`, `action`…) ne sont jamais filtrées.
+- **Nettoyage des workspaces contaminés** — les `pending_emails.json` et `instructions.json` existants contenant un fantôme sont assainis à la première lecture/réécriture par la lib ; le workspace de référence a été nettoyé (wrapper `_meta` préservé, pas de régénération de `session_id`).
+
+### Ajouté
+
+- **Tests `lib/tests/test_fs_utils_meta.py`** — 15 tests stdlib `unittest` : détection meta-shaped (fantôme réel v2.3.1, `consumes_session_id`, dict vide, entrées métier préservées), filtrage en lecture (v1 brut, v2 contaminé, fichier sain intact, données non-liste), purge à l'écriture et round-trip lecture contaminée → fusion → réécriture saine.
+
 ## [2.3.1] - 2026-07-06
 
 Deux corrections de bugs bloquants : la résolution de la racine du plugin dans les blocs Bash (toutes les commandes échouaient sur « CLAUDE_PLUGIN_ROOT non defini ») et l'ouverture des pièces jointes depuis le dashboard (« segment invalide »).
