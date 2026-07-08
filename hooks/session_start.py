@@ -259,6 +259,18 @@ def main() -> None:
     _log_smoke(payload)
 
     project = _project_dir(payload)
+
+    # Garde-fou v2.4.0 : ne rien faire hors d'un workspace todomail initialise.
+    # Le marqueur `.todomail-config.json` (cree par /start, jamais supprime —
+    # cf. CLAUDE.md) est le critere. Sans cette garde, toute session Claude
+    # ouverte ailleurs (repo de dev, home...) creait un slug fantome dans
+    # `~/.config/todomail/` (memory_cache.json orphelin) et injectait un
+    # faux « Reprise possible : repertoires manquants ». `_log_smoke` reste
+    # au-dessus : opt-in explicite via `.hooks_debug`, utile pour deboguer
+    # le declenchement du hook y compris hors workspace.
+    if not (project / ".todomail-config.json").is_file():
+        return
+
     cache = _build_memory_cache(project)
     _write_memory_cache(project, cache)
 

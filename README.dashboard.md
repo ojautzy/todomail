@@ -244,6 +244,12 @@ Le dashboard dispose d'un menu de navigation dans l'en-tête avec des onglets po
 * **Via l'API serveur :** Toutes les lectures/écritures passent par l'API JSON du serveur (`/api/*`), qui opère sur le workspace côté Mac (réutilise `lib/fs_utils.py` et `lib/state.py`).
 * **Visualisation de Documents :** Ouverture des pièces jointes via leur URL serveur (`/api/category/.../file/...`, `/api/tasks/to-work/.../file/...`) dans de nouveaux onglets — le serveur stream les octets avec le bon type MIME.
 
+### Santé du serveur *(v2.4.0)*
+
+* **Serveur périmé :** `/api/poll` renvoie un bloc `server` (`version` du processus, `version_on_disk` relue à chaque poll, `started_at`, `stale`). Après une mise à jour du plugin (qui ne redémarre pas le serveur), une bannière ambre invite à relancer `/todomail:dashboard`.
+* **Pannes visibles :** une lecture refusée par l'OS (`PermissionError`, `EIO`…) n'est plus servie comme une section vide : `/api/categories` remonte un champ `errors` par catégorie, les autres routes répondent **500 explicite** (le 403 est réservé aux évasions de chemin et à l'auth). Une bannière orange dismissible signale « données possiblement incomplètes » ; le détail (traceback `[EXC]`) est dans `serve_dashboard.log` (machine-local).
+* **Self-heal :** si le contexte du processus est dégradé (la sonde du marqueur `.todomail-config.json` échoue elle aussi en `PermissionError`), le serveur s'arrête volontairement (`exit 70`) plutôt que de servir indéfiniment des données dégradées — un LaunchAgent le relance, sinon `/todomail:dashboard` détecte le port INACTIF.
+
 ### Navigation et Filtres
 
 * **Recherche Temps Réel :** Filtrage instantané par mot-clé sur l'expéditeur et les champs spécifiques de la catégorie active.

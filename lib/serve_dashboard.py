@@ -37,6 +37,10 @@ import mimetypes
 import os
 import subprocess
 import sys
+import threading
+import time
+import traceback
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
@@ -77,6 +81,32 @@ CATEGORIES = {
 }
 MEMORY_SECTIONS = {"people", "projects", "context"}
 
+# Code de sortie du self-heal (v2.4.0) : contexte processus degrade
+# (PermissionError sur des chemins valides du workspace). EX_SOFTWARE.
+EXIT_DEGRADED = 70
+
+
+class PathEscapeError(PermissionError):
+    """Rejet de la garde anti-traversee (segment invalide, chemin hors
+    workspace, categorie/section inconnue).
+
+    Sous-classe de PermissionError pour compatibilite, mais distincte des
+    PermissionError du filesystem (EACCES/EPERM) : une evasion de chemin est
+    une faute CLIENT (-> 403), une lecture refusee par l'OS est une panne
+    SERVEUR (-> 500 + journalisation + self-heal). Le bug v2.3.2 (processus
+    au contexte degrade servant des 403 muets) venait de cette confusion.
+    """
+
+
+def _read_plugin_version(plugin_dir: Path | None = None) -> str | None:
+    """Version du plugin lue depuis .claude-plugin/plugin.json (None si illisible)."""
+    base = plugin_dir if plugin_dir is not None else _PLUGIN_DIR
+    try:
+        with open(base / ".claude-plugin" / "plugin.json", encoding="utf-8") as f:
+            return json.load(f).get("version")
+    except Exception:
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Configuration serveur (resolue une fois au demarrage)
@@ -90,6 +120,12 @@ class ServerConfig:
         self.team_domain = cfg.get("team_domain")
         self.access_aud = cfg.get("access_aud")
         self._jwks_client = None  # PyJWKClient, lazy
+        # Detection de serveur perime (v2.4.0) : version du plugin capturee
+        # au demarrage, comparee a chaque /api/poll a la version sur disque.
+        # Une mise a jour du plugin ne redemarre pas ce processus : le front
+        # affiche alors une banniere « relancer /todomail:dashboard ».
+        self.version_running = _read_plugin_version()
+        self.started_at = datetime.now(timezone.utc).isoformat()
 
     @property
     def issuer(self) -> str | None:
@@ -136,10 +172,10 @@ def resolve_under(root: Path, *parts: str) -> Path:
     """
     for p in parts:
         if not _segment_ok(p):
-            raise PermissionError(f"segment invalide: {p!r}")
+            raise PathEscapeError(f"segment invalide: {p!r}")
     cand = root.joinpath(*parts).resolve()
     if cand != root and root not in cand.parents:
-        raise PermissionError("chemin hors workspace")
+        raise PathEscapeError("chemin hors workspace")
     return cand
 
 
@@ -245,17 +281,69 @@ class TodoMailHandler(BaseHTTPRequestHandler):
 
     # --- logging ------------------------------------------------------------
 
-    def log_message(self, fmt: str, *args) -> None:  # noqa: A003
+    def _log_line(self, text: str) -> None:
+        """Ecrit une ligne dans le log machine-local (best-effort, jamais bloquant)."""
         try:
-            line = "%s - - [%s] %s\n" % (
-                self.address_string(),
-                self.log_date_time_string(),
-                fmt % args,
-            )
             with open(local_runtime_dir() / "serve_dashboard.log", "a", encoding="utf-8") as f:
-                f.write(line)
+                f.write(text.rstrip("\n") + "\n")
         except Exception:
             pass
+
+    def log_message(self, fmt: str, *args) -> None:  # noqa: A003
+        self._log_line("%s - - [%s] %s" % (
+            self.address_string(),
+            self.log_date_time_string(),
+            fmt % args,
+        ))
+
+    def _log_exception(self, exc: BaseException) -> None:
+        """Trace complete d'une exception dans le log serveur (v2.4.0).
+
+        Avant la v2.4.0, les erreurs internes partaient dans la reponse HTTP
+        (str(exc)) sans laisser AUCUNE trace cote serveur — le diagnostic du
+        bug « 403 muets » a du etre reconstitue par recoupement. Toute reponse
+        5xx (et toute erreur d'E/S) est desormais journalisee avec traceback.
+        """
+        self._log_line(
+            f"[EXC] {self.command} {self.path} -> {type(exc).__name__}: {exc}\n"
+            + "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).rstrip()
+        )
+
+    # --- self-heal (v2.4.0) ---------------------------------------------------
+
+    def _maybe_self_heal(self, exc: OSError) -> None:
+        """Sur PermissionError filesystem : sonde le contexte du processus.
+
+        Un processus serveur au contexte de securite macOS degrade (cas du
+        2026-07-07 : TCC/sandbox du parent disparu) recoit des PermissionError
+        sur des fichiers pourtant valides, et servirait indefiniment des
+        donnees degradees. Sonde : lecture du marqueur workspace
+        `.todomail-config.json` (toujours present, mode 600, meme uid). Si la
+        sonde echoue elle aussi en PermissionError, le contexte est mort :
+        arret volontaire (EXIT_DEGRADED) apres flush de la reponse en cours —
+        un LaunchAgent le relance, sinon /todomail:dashboard detecte INACTIF.
+        """
+        if not isinstance(exc, PermissionError) or isinstance(exc, PathEscapeError):
+            return
+        sentinel = self.config.workspace / ".todomail-config.json"
+        try:
+            sentinel.read_bytes()
+            return  # contexte sain : erreur specifique au chemin, on continue de servir
+        except PermissionError:
+            pass
+        except OSError:
+            return  # marqueur absent/deplace : pas une preuve de contexte degrade
+        self._log_line(
+            "[FATAL] contexte processus degrade : PermissionError sur le marqueur "
+            f"workspace {sentinel} — arret volontaire (exit {EXIT_DEGRADED}). "
+            "Relancer /todomail:dashboard (ou laisser le LaunchAgent redemarrer)."
+        )
+
+        def _die() -> None:
+            time.sleep(0.5)  # laisse la reponse HTTP en cours se flusher
+            os._exit(EXIT_DEGRADED)
+
+        threading.Thread(target=_die, daemon=True).start()
 
     # --- dispatch -----------------------------------------------------------
 
@@ -274,11 +362,19 @@ class TodoMailHandler(BaseHTTPRequestHandler):
             if not self._authorized():
                 return
             return self._route_api_get(segs[1:])
-        except PermissionError as exc:
+        except PathEscapeError as exc:
             self._send_error_json(403, str(exc))
         except FileNotFoundError:
             self._send_error_json(404, "not found")
+        except OSError as exc:
+            # Panne d'acces filesystem (EACCES/EPERM/EIO...) : c'est une
+            # erreur SERVEUR, pas une faute client — 500 explicite (plus
+            # jamais un 403 muet), traceback journalise, sonde self-heal.
+            self._log_exception(exc)
+            self._send_error_json(500, f"acces filesystem en echec: {exc}")
+            self._maybe_self_heal(exc)
         except Exception as exc:  # pragma: no cover - garde-fou
+            self._log_exception(exc)
             self._send_error_json(500, f"{type(exc).__name__}: {exc}")
 
     def do_PUT(self) -> None:  # noqa: N802
@@ -300,13 +396,18 @@ class TodoMailHandler(BaseHTTPRequestHandler):
             if not self._check_unlocked():
                 return
             return self._route_api_mutation(method, segs[1:])
-        except PermissionError as exc:
+        except PathEscapeError as exc:
             self._send_error_json(403, str(exc))
         except FileNotFoundError:
             self._send_error_json(404, "not found")
         except json.JSONDecodeError:
             self._send_error_json(400, "corps JSON invalide")
+        except OSError as exc:
+            self._log_exception(exc)
+            self._send_error_json(500, f"acces filesystem en echec: {exc}")
+            self._maybe_self_heal(exc)
         except Exception as exc:  # pragma: no cover - garde-fou
+            self._log_exception(exc)
             self._send_error_json(500, f"{type(exc).__name__}: {exc}")
 
     # --- routes GET ---------------------------------------------------------
@@ -422,27 +523,57 @@ class TodoMailHandler(BaseHTTPRequestHandler):
         state = load_state()
         inv = runtime_dir() / "invalidate.txt"
         stamp = int(inv.stat().st_mtime * 1000) if inv.exists() else None
-        self._send_json({"invalidate_stamp": stamp, "state": state})
+        # Detection de serveur perime (v2.4.0) : la version sur disque est
+        # relue a chaque poll (fichier minuscule). Si elle differe de celle
+        # capturee au demarrage — ou si le repertoire du plugin a disparu —
+        # ce processus execute du vieux code : le front affiche la banniere
+        # « relancer /todomail:dashboard ».
+        version_on_disk = _read_plugin_version()
+        self._send_json({
+            "invalidate_stamp": stamp,
+            "state": state,
+            "server": {
+                "version": self.config.version_running,
+                "version_on_disk": version_on_disk,
+                "started_at": self.config.started_at,
+                "stale": version_on_disk != self.config.version_running,
+            },
+        })
 
     def _api_categories(self) -> None:
-        counts = {}
+        # strict_io (v2.4.0) : un fichier ABSENT vaut legitimement 0 mail,
+        # mais une lecture REFUSEE (PermissionError d'un processus degrade,
+        # EIO...) n'est plus avalee comme « 0 mails » : elle est journalisee
+        # et remontee dans `errors` pour que le front affiche une panne au
+        # lieu de categories faussement vides (bug du 2026-07-07).
+        counts, errors = {}, {}
         for cat in CATEGORIES:
             try:
-                _meta, emails = read_pending_emails(self.safe_resolve("todo", cat))
+                _meta, emails = read_pending_emails(
+                    self.safe_resolve("todo", cat), strict_io=True
+                )
                 counts[cat] = len(emails)
-            except Exception:
+            except OSError as exc:
                 counts[cat] = 0
-        self._send_json({"counts": counts})
+                errors[cat] = f"{type(exc).__name__}: {exc}"
+                self._log_exception(exc)
+                self._maybe_self_heal(exc)
+        payload = {"counts": counts}
+        if errors:
+            payload["errors"] = errors
+        self._send_json(payload)
 
     def _validate_category(self, cat: str) -> None:
         if cat not in CATEGORIES:
-            raise PermissionError(f"categorie inconnue: {cat}")
+            raise PathEscapeError(f"categorie inconnue: {cat}")
 
     def _api_category_emails(self, cat: str) -> None:
         self._validate_category(cat)
         cat_dir = self.safe_resolve("todo", cat)
-        pending_meta, emails = read_pending_emails(cat_dir)
-        instr_meta, instructions = read_instructions(cat_dir)
+        # strict_io : une panne d'E/S remonte en 500 explicite (do_GET)
+        # au lieu d'etre servie comme une categorie vide.
+        pending_meta, emails = read_pending_emails(cat_dir, strict_io=True)
+        instr_meta, instructions = read_instructions(cat_dir, strict_io=True)
         self._send_json({
             "emails": emails,
             "pending_meta": pending_meta,
@@ -626,7 +757,7 @@ class TodoMailHandler(BaseHTTPRequestHandler):
                               "content": path.read_text(encoding="utf-8")})
             return self._send_json({"files": files})
         if section not in MEMORY_SECTIONS:
-            raise PermissionError(f"section inconnue: {section}")
+            raise PathEscapeError(f"section inconnue: {section}")
         d = self.safe_resolve("memory", section)
         files = []
         if d.is_dir():
@@ -646,7 +777,7 @@ class TodoMailHandler(BaseHTTPRequestHandler):
             (self.config.workspace / "CLAUDE.md").write_text(content, encoding="utf-8")
             return self._send_json({"ok": True})
         if section not in MEMORY_SECTIONS:
-            raise PermissionError(f"section inconnue: {section}")
+            raise PathEscapeError(f"section inconnue: {section}")
         if not name.endswith(".md"):
             return self._send_error_json(400, "nom .md attendu")
         path = self.safe_resolve("memory", section, name)
@@ -658,7 +789,7 @@ class TodoMailHandler(BaseHTTPRequestHandler):
         if section == "claude":
             return self._send_error_json(403, "CLAUDE.md non supprimable")
         if section not in MEMORY_SECTIONS:
-            raise PermissionError(f"section inconnue: {section}")
+            raise PathEscapeError(f"section inconnue: {section}")
         path = self.safe_resolve("memory", section, name)
         safe_rm(path)
         self._send_json({"ok": True})

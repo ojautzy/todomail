@@ -7,6 +7,25 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.4.0] - 2026-07-07
+
+Durcissement du serveur dashboard, issu du diagnostic du 2026-07-07 : un processus serveur au contexte de sécurité macOS dégradé (parent disparu après une mise à jour du plugin) recevait des `PermissionError` sur des fichiers pourtant valides et affichait un dashboard intégralement vide — mémoire/tâches en 403 muets, catégories « 0 mails » silencieuses — sans aucune trace exploitable côté serveur.
+
+### Ajouté
+
+- **Détection de serveur périmé** — `/api/poll` expose un bloc `server` (`version` capturée au démarrage, `version_on_disk` relue à chaque poll, `started_at`, `stale`). Une mise à jour du plugin ne redémarrant pas le processus serveur, le dashboard affiche désormais une bannière ambre « Serveur du dashboard obsolète — relancer `/todomail:dashboard` » dès que les deux versions divergent.
+- **Bannière de panne serveur dans le dashboard** — toute réponse 5xx (message JSON `error` du serveur) ou erreur de lecture des catégories alimente une bannière orange dismissible « les données affichées peuvent être incomplètes », au lieu de sections silencieusement vides.
+- **Self-heal du serveur** — sur `PermissionError` filesystem, le serveur sonde le marqueur workspace `.todomail-config.json` (toujours présent, même uid) ; si la sonde échoue elle aussi en `PermissionError`, le contexte du processus est dégradé : arrêt volontaire (`exit 70`, EX_SOFTWARE) après flush de la réponse — un LaunchAgent le relance, sinon `/todomail:dashboard` détecte le port INACTIF et relance.
+- **`strict_io` dans `lib/fs_utils.py`** — `atomic_read_json`, `read_v2_json`, `read_pending_emails`, `read_instructions` acceptent `strict_io=True` : seule l'absence du fichier vaut « vide » ; les erreurs d'E/S (`PermissionError`, `EIO`…) sont propagées au lieu d'être lues comme un fichier absent. Comportement par défaut inchangé pour les cycles.
+- **Tests `lib/tests/test_dashboard_hardening.py`** — 12 tests stdlib `unittest` : `strict_io` (absent vs illisible vs JSON corrompu, traversée des wrappers), `PathEscapeError` (sous-classe, distinction évasion/panne), `_read_plugin_version` (manifeste temporaire, illisible, dépôt réel), garde du hook session_start (aucun slug fantôme hors workspace, cache écrit dans un workspace marqué).
+
+### Corrigé
+
+- **403 muets sur les pannes filesystem** — la garde anti-traversée lève désormais `PathEscapeError` (sous-classe de `PermissionError`) ; le serveur mappe évasion de chemin → 403 (faute client) et erreur d'E/S OS → **500 explicite** (panne serveur), là où toute `PermissionError` — y compris `EACCES` d'un processus dégradé — devenait un 403 indiscernable.
+- **Catégories faussement vides** — `/api/categories` et `/api/category/{cat}/emails` lisent en `strict_io` : un `pending_emails.json` illisible remonte en erreur (`errors` par catégorie / 500) au lieu de « 0 mails ».
+- **Exceptions invisibles côté serveur** — toute réponse 5xx et toute erreur d'E/S est journalisée avec traceback complet dans `serve_dashboard.log` (préfixe `[EXC]`) ; le diagnostic du 2026-07-07 avait dû être reconstitué par recoupement faute de toute trace.
+- **Slugs fantômes dans `~/.config/todomail/`** — le hook `session_start` ne fait plus rien hors d'un workspace todomail initialisé (marqueur `.todomail-config.json` absent) : plus de `memory_cache.json` orphelin ni de faux « Reprise possible : répertoires manquants » pour les sessions ouvertes ailleurs (repo de dev, home…). Le smoke-log opt-in (`.hooks_debug`) reste actif pour déboguer le déclenchement.
+
 ## [2.3.2] - 2026-07-07
 
 Correction du « mail vide » apparaissant en tête de chaque catégorie du dashboard après `/check-inbox` : le bloc `_meta` des `pending_emails.json` était fusionné dans la liste des mails par l'étape de tri.

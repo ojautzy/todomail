@@ -67,18 +67,35 @@ def atomic_write_json(path: Path, data: Any) -> None:
     os.replace(str(tmp), str(path))
 
 
-def atomic_read_json(path: Path) -> Any | None:
-    """Read JSON file, returning None if absent or empty."""
+def atomic_read_json(path: Path, *, strict_io: bool = False) -> Any | None:
+    """Read JSON file, returning None if absent or empty.
+
+    strict_io=False (defaut, comportement historique) : toute erreur d'E/S
+    est assimilee a un fichier absent (retour None). Suffisant pour les
+    scripts de cycle, mais masque une panne d'acces (PermissionError d'un
+    processus au contexte degrade lue comme « 0 mails » — cf. v2.4.0).
+
+    strict_io=True : seule l'absence du fichier (FileNotFoundError) vaut
+    None ; les autres erreurs d'E/S (PermissionError, EIO...) sont
+    propagees a l'appelant, qui peut alors signaler une panne au lieu de
+    servir silencieusement du vide. Un JSON corrompu reste traite comme
+    vide dans les deux modes (probleme de donnees, pas d'infrastructure).
+    """
     path = Path(path)
-    if not path.exists():
-        return None
     try:
         with open(path, encoding="utf-8") as f:
             content = f.read().strip()
-            if not content:
-                return None
-            return json.loads(content)
-    except (json.JSONDecodeError, OSError):
+    except FileNotFoundError:
+        return None
+    except OSError:
+        if strict_io:
+            raise
+        return None
+    if not content:
+        return None
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
         return None
 
 
@@ -138,7 +155,9 @@ def make_meta(session_id: str, consumes_session_id: str | None = None) -> dict:
     return meta
 
 
-def read_v2_json(path: Path, data_key: str = "emails") -> tuple[dict | None, list]:
+def read_v2_json(
+    path: Path, data_key: str = "emails", *, strict_io: bool = False
+) -> tuple[dict | None, list]:
     """Read a v2 JSON file, returning (_meta, data_list).
 
     Supports both v1 (bare array) and v2 (object with _meta) formats.
@@ -146,11 +165,14 @@ def read_v2_json(path: Path, data_key: str = "emails") -> tuple[dict | None, lis
     v2 object     -> returns (_meta, obj[data_key]).
     Absent file   -> returns (None, []).
 
+    strict_io=True : les erreurs d'E/S autres que l'absence du fichier sont
+    propagees au lieu d'etre lues comme un fichier vide (cf. atomic_read_json).
+
     Defense en profondeur : les blocs _meta egares dans la liste de donnees
     (cf. is_meta_shaped) sont filtres a la lecture — un fichier contamine
     redevient sain sans reecriture.
     """
-    raw = atomic_read_json(path)
+    raw = atomic_read_json(path, strict_io=strict_io)
     if raw is None:
         return None, []
     if isinstance(raw, list):
@@ -187,9 +209,13 @@ def write_v2_json(
 # Convenience wrappers for pending_emails.json and instructions.json
 # ---------------------------------------------------------------------------
 
-def read_pending_emails(category_dir: Path) -> tuple[dict | None, list]:
+def read_pending_emails(
+    category_dir: Path, *, strict_io: bool = False
+) -> tuple[dict | None, list]:
     """Read pending_emails.json from a category directory."""
-    return read_v2_json(Path(category_dir) / "pending_emails.json", "emails")
+    return read_v2_json(
+        Path(category_dir) / "pending_emails.json", "emails", strict_io=strict_io
+    )
 
 
 def write_pending_emails(category_dir: Path, emails: list, session_id: str) -> None:
@@ -197,9 +223,13 @@ def write_pending_emails(category_dir: Path, emails: list, session_id: str) -> N
     write_v2_json(Path(category_dir) / "pending_emails.json", "emails", emails, session_id)
 
 
-def read_instructions(category_dir: Path) -> tuple[dict | None, list]:
+def read_instructions(
+    category_dir: Path, *, strict_io: bool = False
+) -> tuple[dict | None, list]:
     """Read instructions.json from a category directory."""
-    return read_v2_json(Path(category_dir) / "instructions.json", "instructions")
+    return read_v2_json(
+        Path(category_dir) / "instructions.json", "instructions", strict_io=strict_io
+    )
 
 
 def write_instructions(

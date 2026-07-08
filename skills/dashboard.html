@@ -123,7 +123,19 @@
                 }
                 const res = await fetch(path, opts);
                 if (res.status === 409) { const e = new Error('locked'); e.locked = true; throw e; }
-                if (!res.ok) { const e = new Error('http ' + res.status); e.status = res.status; throw e; }
+                if (!res.ok) {
+                    // v2.4.0 : extraire le message d'erreur JSON du serveur et
+                    // signaler les 5xx a l'App (banniere panne serveur) — un
+                    // 500 ne doit plus etre confondu avec une section vide.
+                    let detail = '';
+                    try { const b = await res.json(); detail = (b && b.error) || ''; } catch (_) {}
+                    const e = new Error(detail || ('http ' + res.status));
+                    e.status = res.status;
+                    if (res.status >= 500 && typeof api.onServerError === 'function') {
+                        try { api.onServerError(e, path); } catch (_) {}
+                    }
+                    throw e;
+                }
                 const ct = res.headers.get('content-type') || '';
                 return ct.includes('application/json') ? res.json() : res.text();
             },
@@ -189,6 +201,12 @@
             const [errorsPanelOpen, setErrorsPanelOpen] = useState(false);
             const [dismissedIds, setDismissedIds] = useState(new Set());    // IDs retires cote UI apres bouton Ignorer
 
+            // v2.4.0 — sante du serveur : bloc `server` du /api/poll (detection
+            // de processus perime apres mise a jour du plugin) + derniere panne
+            // 5xx / erreur de lecture des categories (banniere, dismissible).
+            const [serverInfo, setServerInfo] = useState(null);       // { version, version_on_disk, started_at, stale }
+            const [serverErrorMsg, setServerErrorMsg] = useState(null);
+
             // Etat vue Memoire
             const [memorySection, setMemorySection] = useState('claude');   // 'claude' | 'people' | 'projects' | 'context'
             const [memoryFiles, setMemoryFiles] = useState([]);             // [{ name, path, content }]
@@ -222,12 +240,21 @@
             useEffect(() => {
                 const timer = setTimeout(() => lucide.createIcons(), 50);
                 return () => clearTimeout(timer);
-            }, [activeSubdir, rootHandle, emails, selectedMail, isDark, expandedCard, saveStatus, activeView, activeTaskSection, consultEntries, toSendFiles, toWorkTasks, expandedTaskCard, editModal, confirmDelete, copiedField]);
+            }, [activeSubdir, rootHandle, emails, selectedMail, isDark, expandedCard, saveStatus, activeView, activeTaskSection, consultEntries, toSendFiles, toWorkTasks, expandedTaskCard, editModal, confirmDelete, copiedField, serverInfo, serverErrorMsg]);
 
             const showToast = (type) => {
                 setSaveStatus(type);
                 setTimeout(() => setSaveStatus(null), 2000);
             };
+
+            // v2.4.0 : toute reponse 5xx du serveur alimente la banniere de
+            // panne (le message vient du corps JSON {error: ...} du serveur).
+            useEffect(() => {
+                api.onServerError = (e, path) => {
+                    setServerErrorMsg(`${path} — ${e.message}`);
+                };
+                return () => { api.onServerError = null; };
+            }, []);
 
             // ========== CATEGORIZATION VIEW LOGIC (unchanged) ==========
 
@@ -235,6 +262,12 @@
                 try {
                     const data = await api.categories();
                     setCounts(data.counts || {});
+                    // v2.4.0 : lectures refusees cote serveur (strict_io) —
+                    // afficher la panne au lieu de categories faussement vides.
+                    if (data.errors && Object.keys(data.errors).length > 0) {
+                        const det = Object.entries(data.errors).map(([c, m]) => `${c}: ${m}`).join(' · ');
+                        setServerErrorMsg(`lecture des catégories en échec — ${det}`);
+                    }
                 } catch (_) { /* serveur injoignable : on garde l'etat courant */ }
             };
 
@@ -288,6 +321,7 @@
                     setConnected(true);
                     if (d.state) setWorkspaceState(d.state);
                     if (d.invalidate_stamp) setInvalidateStamp(d.invalidate_stamp);
+                    if (d.server) setServerInfo(d.server);
                     await Promise.all([
                         loadSubdirEmails(null, activeSubdir),
                         loadAllCounts(null),
@@ -377,9 +411,9 @@
             const pollOnce = async () => {
                 try {
                     const d = await api.poll();
-                    return { stamp: d.invalidate_stamp, state: d.state };
+                    return { stamp: d.invalidate_stamp, state: d.state, server: d.server || null };
                 } catch (_) {
-                    return { stamp: null, state: null };
+                    return { stamp: null, state: null, server: null };
                 }
             };
 
@@ -411,8 +445,14 @@
 
                 const tick = async () => {
                     if (cancelled) return;
-                    const { stamp, state } = await pollOnce();
+                    const { stamp, state, server } = await pollOnce();
                     if (cancelled) return;
+                    // Identite stable : ne remplacer l'objet que si le contenu
+                    // change (sinon re-render + createIcons a chaque tick 3s).
+                    if (server) setServerInfo(prev =>
+                        (prev && prev.stale === server.stale
+                              && prev.version === server.version
+                              && prev.version_on_disk === server.version_on_disk) ? prev : server);
 
                     const newSessionId = state && state.session_id ? state.session_id : null;
                     const newLock = state && state.active_lock ? state.active_lock : null;
@@ -1024,6 +1064,42 @@
                                                 Verrou actif : <span className="font-mono">{activeLock}</span>. Les actions sont désactivées jusqu'à la fin du cycle.
                                             </div>
                                         </div>
+                                    </div>
+                                )}
+
+                                {/* v2.4.0 — serveur perime : le plugin a ete mis a jour
+                                    mais ce processus serveur execute encore l'ancien code. */}
+                                {rootHandle && serverInfo && serverInfo.stale && (
+                                    <div className="mb-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-2xl p-4 flex items-center gap-3 animate-slide-up">
+                                        <div className="text-amber-600"><Icon name="refresh-cw" size={20} /></div>
+                                        <div className="flex-1">
+                                            <div className="font-bold text-sm text-amber-900 dark:text-amber-200">Serveur du dashboard obsolète</div>
+                                            <div className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
+                                                Le plugin a été mis à jour (<span className="font-mono">{serverInfo.version || '?'}</span> → <span className="font-mono">{serverInfo.version_on_disk || '?'}</span>) mais le serveur exécute encore l'ancienne version.
+                                                Relancer <span className="font-mono">/todomail:dashboard</span> sur le mac serveur pour le redémarrer.
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* v2.4.0 — panne serveur (5xx ou lecture refusee) : ne plus
+                                    confondre une panne d'acces avec des sections vides. */}
+                                {rootHandle && serverErrorMsg && (
+                                    <div className="mb-4 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-2xl p-4 flex items-center gap-3 animate-slide-up">
+                                        <div className="text-orange-600"><Icon name="server-crash" size={20} /></div>
+                                        <div className="flex-1">
+                                            <div className="font-bold text-sm text-orange-900 dark:text-orange-200">Erreur serveur — les données affichées peuvent être incomplètes</div>
+                                            <div className="text-xs text-orange-700 dark:text-orange-300 mt-0.5 break-all">
+                                                {serverErrorMsg} — détail dans <span className="font-mono">serve_dashboard.log</span> (machine-locale).
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => setServerErrorMsg(null)}
+                                            className="text-orange-600 hover:text-orange-800 dark:hover:text-orange-300 p-1"
+                                            title="Masquer"
+                                        >
+                                            <Icon name="x" size={16} />
+                                        </button>
                                     </div>
                                 )}
 
