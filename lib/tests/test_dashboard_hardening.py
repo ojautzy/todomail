@@ -182,8 +182,10 @@ class TestSessionStartGuard(unittest.TestCase):
             res = self._run_hook(project, config_home)
             self.assertEqual(res.returncode, 0, res.stderr)
             # Ni slug machine-local, ni message « Reprise possible » parasite.
-            self.assertFalse(config_home.exists() and any(config_home.iterdir()),
-                             list(config_home.iterdir()) if config_home.exists() else None)
+            # Seul le pointeur global `plugin_root` (v2.4.2, ecrit a chaque
+            # session) est attendu — aucun repertoire de slug.
+            entries = sorted(p.name for p in config_home.iterdir()) if config_home.exists() else []
+            self.assertEqual(entries, ["plugin_root"], entries)
             self.assertEqual(res.stdout.strip(), "")
 
     def test_workspace_marque_ecrit_le_cache(self):

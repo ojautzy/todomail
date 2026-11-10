@@ -18,19 +18,24 @@ sur les évidences et cache RAG pour éviter les appels MCP redondants.
 
 Les modules `lib.state`, `lib.fs_utils`, `lib.rag_cache`, `lib.error_modes`, `lib.config` mentionnés dans ce SKILL vivent à la racine du plugin, pas dans le répertoire du skill ni dans le workspace utilisateur. Ne pas chercher `skills/sort-mails/lib/` — ce chemin n'existe pas.
 
-**Pattern canonique** pour tout bloc Bash qui importe `lib.*` — la racine est résolue **dans le Python** via l'exécutable `todomail-plugin-root` (répertoire `bin/` du plugin, sur le PATH du tool Bash ; `CLAUDE_PLUGIN_ROOT` n'est jamais exporté aux sous-processus Bash) :
+**Pattern canonique** pour tout bloc Bash qui importe `lib.*` — la racine est résolue **dans le Python** par `_todomail_root()` : variable d'environnement `CLAUDE_PLUGIN_ROOT` si présente, sinon chemin du plugin substitué inline par Claude Code dans ce fichier, sinon pointeur `~/.config/todomail/plugin_root` écrit par le hook SessionStart (depuis la v2.4.2 le plugin n'embarque plus de `bin/`, refusé par claude.ai) :
 
 ```bash
 python3 - <<'PY'
 import sys, os
-plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-if not plugin_root:
-    import shutil
-    exe = shutil.which("todomail-plugin-root")
-    if exe:
-        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
-if not plugin_root:
-    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
+def _todomail_root():
+    # v2.4.2 : env (hooks) > substitution inline Claude Code > pointeur ecrit par le hook SessionStart
+    cands = [os.environ.get("CLAUDE_PLUGIN_ROOT", ""), "${CLAUDE_PLUGIN_ROOT}"]
+    home = os.environ.get("TODOMAIL_CONFIG_HOME") or os.path.expanduser("~/.config/todomail")
+    try:
+        cands.append(open(os.path.join(home, "plugin_root"), encoding="utf-8").read().strip())
+    except OSError:
+        pass
+    for c in cands:
+        if c and not c.startswith("$") and os.path.isfile(os.path.join(c, "lib", "state.py")):
+            return c
+    raise RuntimeError("racine du plugin todomail introuvable : ouvrir une nouvelle session Claude (le hook SessionStart l'enregistre dans ~/.config/todomail/plugin_root)")
+plugin_root = _todomail_root()
 sys.path.insert(0, plugin_root)
 from lib.state import load_state, save_state, acquire_lock, release_lock, update_checkpoint, record_error, get_pending_errors
 from lib.fs_utils import safe_mv, atomic_write_json, read_v2_json, write_v2_json, read_pending_emails, write_pending_emails
@@ -39,7 +44,7 @@ from lib.rag_cache import RagCache
 PY
 ```
 
-Si un `import lib.X` renvoie `ModuleNotFoundError`, ne **JAMAIS** conclure « pas de lib externe, analyse directe en flux » — c'est un bug d'import, pas une caractéristique du skill. Vérifier que `todomail-plugin-root` est disponible (`which todomail-plugin-root` ; sinon le plugin n'est pas actif), fixer le `sys.path` et retenter. Les helpers sont indispensables : sans `acquire_lock`/`save_state`, le dashboard n'est pas notifié du cycle et `state.json` reste incohérent.
+Si un `import lib.X` renvoie `ModuleNotFoundError`, ne **JAMAIS** conclure « pas de lib externe, analyse directe en flux » — c'est un bug d'import, pas une caractéristique du skill. Vérifier que la racine du plugin est résolue (`cat ~/.config/todomail/plugin_root` ; si absent, ouvrir une nouvelle session Claude pour que le hook SessionStart l'écrive), fixer le `sys.path` et retenter. Les helpers sont indispensables : sans `acquire_lock`/`save_state`, le dashboard n'est pas notifié du cycle et `state.json` reste incohérent.
 
 ## Vérification préalable des répertoires
 
@@ -110,7 +115,7 @@ Pour chaque mail restant dans `inbox/`, Claude lit **dans son contexte principal
 | `.pdf` | `Read` natif (multimodal) |
 | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` | `Read` natif (multimodal) |
 | `.docx`, `.xlsx`, `.pptx`, `.rtf`, `.epub` | `python3 -m markitdown "<chemin>"` |
-| `.odt`, `.ods`, `.odp` | `python3 "$(todomail-plugin-root)/skills/read-odf/scripts/read_odf.py" "<chemin>"` |
+| `.odt`, `.ods`, `.odp` | le bloc d'invocation du skill `read-odf` (`skills/read-odf/SKILL.md`) |
 | Autres binaires | Ne pas lire. Noter « non lisible : [nom] ». |
 
 Installer `markitdown` si absent : `pip install markitdown --break-system-packages`

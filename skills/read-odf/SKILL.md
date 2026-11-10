@@ -26,7 +26,24 @@ Les cas typiques :
 Invoquer via Bash :
 
 ```bash
-python3 "$(todomail-plugin-root)/skills/read-odf/scripts/read_odf.py" "<chemin_du_fichier>"
+python3 - "<chemin_du_fichier>" <<'PY'
+import sys, os, runpy
+def _todomail_root():
+    # v2.4.2 : env (hooks) > substitution inline Claude Code > pointeur ecrit par le hook SessionStart
+    cands = [os.environ.get("CLAUDE_PLUGIN_ROOT", ""), "${CLAUDE_PLUGIN_ROOT}"]
+    home = os.environ.get("TODOMAIL_CONFIG_HOME") or os.path.expanduser("~/.config/todomail")
+    try:
+        cands.append(open(os.path.join(home, "plugin_root"), encoding="utf-8").read().strip())
+    except OSError:
+        pass
+    for c in cands:
+        if c and not c.startswith("$") and os.path.isfile(os.path.join(c, "lib", "state.py")):
+            return c
+    raise RuntimeError("racine du plugin todomail introuvable : ouvrir une nouvelle session Claude (le hook SessionStart l'enregistre dans ~/.config/todomail/plugin_root)")
+script = os.path.join(_todomail_root(), "skills", "read-odf", "scripts", "read_odf.py")
+sys.argv = [script] + sys.argv[1:]
+runpy.run_path(script, run_name="__main__")
+PY
 ```
 
 Le texte extrait est affiché sur stdout. Les erreurs sont affichées sur stderr.

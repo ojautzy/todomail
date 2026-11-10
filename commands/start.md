@@ -55,14 +55,19 @@ Après lecture de la config (0a ou 0b), appeler `migrate_legacy_config()` : si l
 ```bash
 python3 - <<'PY'
 import os, sys, json
-plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-if not plugin_root:
-    import shutil
-    exe = shutil.which("todomail-plugin-root")
-    if exe:
-        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
-if not plugin_root:
-    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
+def _todomail_root():
+    # v2.4.2 : env (hooks) > substitution inline Claude Code > pointeur ecrit par le hook SessionStart
+    cands = [os.environ.get("CLAUDE_PLUGIN_ROOT", ""), "${CLAUDE_PLUGIN_ROOT}"]
+    home = os.environ.get("TODOMAIL_CONFIG_HOME") or os.path.expanduser("~/.config/todomail")
+    try:
+        cands.append(open(os.path.join(home, "plugin_root"), encoding="utf-8").read().strip())
+    except OSError:
+        pass
+    for c in cands:
+        if c and not c.startswith("$") and os.path.isfile(os.path.join(c, "lib", "state.py")):
+            return c
+    raise RuntimeError("racine du plugin todomail introuvable : ouvrir une nouvelle session Claude (le hook SessionStart l'enregistre dans ~/.config/todomail/plugin_root)")
+plugin_root = _todomail_root()
 sys.path.insert(0, plugin_root)
 from lib.state import workspace_dir
 from lib.config import migrate_legacy_config, local_config_path
@@ -88,14 +93,19 @@ Depuis la v2.1.0, le téléchargement des mails est pris en charge par le plugin
 ```bash
 python3 - <<'PY'
 import os, sys, json
-plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-if not plugin_root:
-    import shutil
-    exe = shutil.which("todomail-plugin-root")
-    if exe:
-        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
-if not plugin_root:
-    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
+def _todomail_root():
+    # v2.4.2 : env (hooks) > substitution inline Claude Code > pointeur ecrit par le hook SessionStart
+    cands = [os.environ.get("CLAUDE_PLUGIN_ROOT", ""), "${CLAUDE_PLUGIN_ROOT}"]
+    home = os.environ.get("TODOMAIL_CONFIG_HOME") or os.path.expanduser("~/.config/todomail")
+    try:
+        cands.append(open(os.path.join(home, "plugin_root"), encoding="utf-8").read().strip())
+    except OSError:
+        pass
+    for c in cands:
+        if c and not c.startswith("$") and os.path.isfile(os.path.join(c, "lib", "state.py")):
+            return c
+    raise RuntimeError("racine du plugin todomail introuvable : ouvrir une nouvelle session Claude (le hook SessionStart l'enregistre dans ~/.config/todomail/plugin_root)")
+plugin_root = _todomail_root()
 sys.path.insert(0, plugin_root)
 from lib.state import workspace_dir
 from lib.config import get_imap_config
@@ -134,14 +144,19 @@ Si le bloc `imap` local porte le flag `migrated_from_legacy` : le mot de passe p
 ```bash
 python3 - <<'PY'
 import os, sys, imaplib, socket
-plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-if not plugin_root:
-    import shutil
-    exe = shutil.which("todomail-plugin-root")
-    if exe:
-        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
-if not plugin_root:
-    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
+def _todomail_root():
+    # v2.4.2 : env (hooks) > substitution inline Claude Code > pointeur ecrit par le hook SessionStart
+    cands = [os.environ.get("CLAUDE_PLUGIN_ROOT", ""), "${CLAUDE_PLUGIN_ROOT}"]
+    home = os.environ.get("TODOMAIL_CONFIG_HOME") or os.path.expanduser("~/.config/todomail")
+    try:
+        cands.append(open(os.path.join(home, "plugin_root"), encoding="utf-8").read().strip())
+    except OSError:
+        pass
+    for c in cands:
+        if c and not c.startswith("$") and os.path.isfile(os.path.join(c, "lib", "state.py")):
+            return c
+    raise RuntimeError("racine du plugin todomail introuvable : ouvrir une nouvelle session Claude (le hook SessionStart l'enregistre dans ~/.config/todomail/plugin_root)")
+plugin_root = _todomail_root()
 sys.path.insert(0, plugin_root)
 from lib.state import workspace_dir
 from lib.config import get_imap_config

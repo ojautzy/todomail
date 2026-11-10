@@ -6,26 +6,31 @@ argument-hint: "[--strict] [--retry]"
 
 ## Accès aux helpers Python du plugin (à lire en premier)
 
-Les modules `lib.state`, `lib.fs_utils`, `lib.rag_cache` référencés ci-dessous vivent à la racine du plugin. `CLAUDE_PLUGIN_ROOT` n'est **jamais exporté** aux sous-processus Bash (seuls les hooks et serveurs MCP/LSP le reçoivent) : la racine se résout via l'exécutable `todomail-plugin-root` (répertoire `bin/` du plugin, présent sur le PATH du tool Bash tant que le plugin est actif). Toute référence `${CLAUDE_PLUGIN_ROOT}` apparaissant non substituée ailleurs dans ce fichier se résout de la même façon : `$(todomail-plugin-root)`.
+Les modules `lib.state`, `lib.fs_utils`, `lib.rag_cache` référencés ci-dessous vivent à la racine du plugin. `CLAUDE_PLUGIN_ROOT` n'est **jamais exporté** aux sous-processus Bash (seuls les hooks et serveurs MCP/LSP le reçoivent) : la racine se résout **dans le Python** par `_todomail_root()` : variable d'environnement `CLAUDE_PLUGIN_ROOT` si présente, sinon chemin du plugin substitué inline par Claude Code dans ce fichier, sinon pointeur `~/.config/todomail/plugin_root` écrit par le hook SessionStart (depuis la v2.4.2 le plugin n'embarque plus de `bin/`, refusé par claude.ai). Toute référence à la racine du plugin apparaissant non substituée ailleurs dans ce fichier se résout de la même façon.
 
 ```bash
 python3 - <<'PY'
 import sys, os
-plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-if not plugin_root:
-    import shutil
-    exe = shutil.which("todomail-plugin-root")
-    if exe:
-        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
-if not plugin_root:
-    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
+def _todomail_root():
+    # v2.4.2 : env (hooks) > substitution inline Claude Code > pointeur ecrit par le hook SessionStart
+    cands = [os.environ.get("CLAUDE_PLUGIN_ROOT", ""), "${CLAUDE_PLUGIN_ROOT}"]
+    home = os.environ.get("TODOMAIL_CONFIG_HOME") or os.path.expanduser("~/.config/todomail")
+    try:
+        cands.append(open(os.path.join(home, "plugin_root"), encoding="utf-8").read().strip())
+    except OSError:
+        pass
+    for c in cands:
+        if c and not c.startswith("$") and os.path.isfile(os.path.join(c, "lib", "state.py")):
+            return c
+    raise RuntimeError("racine du plugin todomail introuvable : ouvrir une nouvelle session Claude (le hook SessionStart l'enregistre dans ~/.config/todomail/plugin_root)")
+plugin_root = _todomail_root()
 sys.path.insert(0, plugin_root)
 from lib.state import load_state, save_state, acquire_lock, release_lock, get_pending_errors, clear_error
 # ...
 PY
 ```
 
-Si `ModuleNotFoundError: lib`, ne **jamais** conclure « pas de lib externe » — vérifier que `todomail-plugin-root` est disponible (`which todomail-plugin-root` ; sinon le plugin n'est pas actif) et retenter. Les helpers sont indispensables : sans eux, le dashboard n'est pas notifié du cycle.
+Si `ModuleNotFoundError: lib`, ne **jamais** conclure « pas de lib externe » — vérifier que la racine du plugin est résolue (`cat ~/.config/todomail/plugin_root` ; si absent, ouvrir une nouvelle session Claude pour que le hook SessionStart l'écrive) et retenter. Les helpers sont indispensables : sans eux, le dashboard n'est pas notifié du cycle.
 
 ## Parsing des arguments
 
@@ -106,14 +111,19 @@ du verrou en `finally`) :
 ```bash
 python3 - <<'PY'
 import os, sys
-plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-if not plugin_root:
-    import shutil
-    exe = shutil.which("todomail-plugin-root")
-    if exe:
-        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
-if not plugin_root:
-    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
+def _todomail_root():
+    # v2.4.2 : env (hooks) > substitution inline Claude Code > pointeur ecrit par le hook SessionStart
+    cands = [os.environ.get("CLAUDE_PLUGIN_ROOT", ""), "${CLAUDE_PLUGIN_ROOT}"]
+    home = os.environ.get("TODOMAIL_CONFIG_HOME") or os.path.expanduser("~/.config/todomail")
+    try:
+        cands.append(open(os.path.join(home, "plugin_root"), encoding="utf-8").read().strip())
+    except OSError:
+        pass
+    for c in cands:
+        if c and not c.startswith("$") and os.path.isfile(os.path.join(c, "lib", "state.py")):
+            return c
+    raise RuntimeError("racine du plugin todomail introuvable : ouvrir une nouvelle session Claude (le hook SessionStart l'enregistre dans ~/.config/todomail/plugin_root)")
+plugin_root = _todomail_root()
 sys.path.insert(0, plugin_root)
 sys.path.insert(0, os.path.join(plugin_root, "skills", "fetch-imap", "scripts"))
 

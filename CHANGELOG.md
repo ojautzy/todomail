@@ -7,6 +7,29 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.4.2] - 2026-11-10
+
+Import du plugin dans Claude (plugins hébergés sur claude.ai) refusé par le validateur : d'abord « Plugin contains a top-level bin/ directory ('bin/todomail-plugin-root') », puis « SKILL.md description cannot contain XML tags ». Le répertoire `bin/` introduit en v2.3.1 est supprimé et remplacé par un mécanisme de résolution de la racine du plugin compatible ; les descriptions sont assainies.
+
+### Corrigé
+
+- **Balises dans les descriptions** — second refus à l'import : « Skill 'skills/fetch-imap': SKILL.md description cannot contain XML tags » (`inbox/<timestamp>/` → `inbox/{horodatage}/`). Par précaution, les blocs `<example>`/`<commentary>` de la description de l'agent `mail-prefilter` sont réécrits en prose (contenu inchangé).
+
+### Supprimé
+
+- **`bin/todomail-plugin-root`** — les exécutables `bin/` sont ajoutés au PATH par la CLI mais n'apparaissent pas sur la surface d'approbation admin : claude.ai refuse désormais tout plugin qui en embarque.
+
+### Modifié
+
+- **Résolution de la racine du plugin** — les 23 blocs Python des commandes et skills (`/start`, `/check-inbox`, `/process-todo`, `/briefing`, `/check-agenda`, `/dashboard`, `sort-mails`, `fetch-imap`) embarquent un préambule `_todomail_root()` qui essaie, dans l'ordre : la variable `CLAUDE_PLUGIN_ROOT` (hooks) ; le chemin `${CLAUDE_PLUGIN_ROOT}` substitué inline par Claude Code au chargement du fichier ; le pointeur machine-local `~/.config/todomail/plugin_root` (surchargeable via `$TODOMAIL_CONFIG_HOME`). Un candidat n'est retenu que s'il contient `lib/state.py` ; à défaut, erreur explicite invitant à ouvrir une nouvelle session.
+- **Hook `session_start`** — écrit le pointeur `plugin_root` à chaque démarrage de session, à partir de son propre emplacement (`__file__`), y compris hors workspace (indispensable pour `/start` dans un nouveau workspace). Écriture atomique, uniquement si la valeur change ; la garde anti-slug fantôme de la v2.4.0 est préservée.
+- **Lancement des scripts en shell** — `read-odf` est invoqué par un bloc `python3 - <<'PY'` (préambule + `runpy`) ; le lancement du serveur dashboard (`/todomail:dashboard`) retombe sur le pointeur si la substitution inline n'a pas eu lieu.
+- **Documentation** — `CLAUDE.md` (interdiction de `bin/`, nouveau pattern canonique), `lib/README.md`, messages de dépannage des commandes (`cat ~/.config/todomail/plugin_root` au lieu de `which todomail-plugin-root`).
+
+### Ajouté
+
+- **Tests `lib/tests/test_plugin_root.py`** — 16 tests stdlib `unittest` : contraintes du validateur claude.ai (manifeste à la racine ; descriptions de skills/commandes/agents non vides, ≤ 1024 caractères, sans balise ; noms kebab-case ≤ 64 sans mot réservé, `name` = répertoire du skill), absence de `bin/`, plus aucun appel à `todomail-plugin-root`, préambule présent et identique dans chaque bloc important `lib.*`, ordre de résolution (env, substitution inline, pointeur, pointeur invalide ignoré, échec explicite), écriture et mise à jour du pointeur par le hook hors workspace, lanceurs shell `read-odf` et serveur dashboard.
+
 ## [2.4.1] - 2026-11-10
 
 Correction du suivi des consultations dans le dashboard : la carte « marquée comme traitée » restait affichée jusqu'au rechargement, et le filtre texte semblait sans effet. Cause commune : des clés React dupliquées.
