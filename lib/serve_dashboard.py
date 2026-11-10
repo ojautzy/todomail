@@ -54,6 +54,7 @@ _PLUGIN_DIR = Path(__file__).resolve().parent.parent
 if str(_PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_DIR))
 
+from lib import consult as consult_registry  # noqa: E402
 from lib.config import get_dashboard_config  # noqa: E402
 from lib.fs_utils import (  # noqa: E402
     atomic_read_json,
@@ -478,6 +479,8 @@ class TodoMailHandler(BaseHTTPRequestHandler):
     def _route_tasks_mutation(self, method: str, segs: list[str]) -> None:
         if method == "PUT" and segs == ["consult"]:
             return self._api_tasks_consult_put()
+        if method == "POST" and segs == ["consult", "remove"]:
+            return self._api_tasks_consult_remove()
         if len(segs) == 2 and segs[0] == "to-send":
             if method == "PUT":
                 return self._api_tasks_tosend_put(segs[1])
@@ -639,8 +642,9 @@ class TodoMailHandler(BaseHTTPRequestHandler):
     # --- tasks --------------------------------------------------------------
 
     def _count_consult(self, text: str) -> int:
-        rows = [ln for ln in text.splitlines() if ln.strip().startswith("|")]
-        return max(0, len(rows) - 2)
+        # v2.4.1 : consultations distinctes (doublons exacts comptes une
+        # fois) — coherent avec le nombre de cartes affichees.
+        return len(consult_registry.parse_entries(text))
 
     def _api_tasks_counts(self) -> None:
         ws = self.config.workspace
@@ -659,15 +663,37 @@ class TodoMailHandler(BaseHTTPRequestHandler):
         self._send_json({"counts": {"consult": consult, "to-send": to_send, "to-work": to_work}})
 
     def _api_tasks_consult_get(self) -> None:
-        path = self.config.workspace / "consult.md"
-        content = path.read_text(encoding="utf-8") if path.is_file() else ""
-        self._send_json({"content": content})
+        # v2.4.1 : `entries` = consultations parsees et dedupliquees cote
+        # serveur (lib/consult.py, source unique du format). `content` est
+        # conserve pour compatibilite avec un dashboard.html anterieur.
+        content = consult_registry.read_text(self.config.workspace / "consult.md")
+        self._send_json({
+            "content": content,
+            "entries": consult_registry.parse_entries(content),
+        })
 
     def _api_tasks_consult_put(self) -> None:
+        # Compatibilite (dashboard.html <= v2.4.0) : reecriture integrale.
+        # Le dashboard v2.4.1 utilise POST /api/tasks/consult/remove.
         body = self._read_json_body()
         content = body.get("content", "")
         (self.config.workspace / "consult.md").write_text(content, encoding="utf-8")
         self._send_json({"ok": True})
+
+    def _api_tasks_consult_remove(self) -> None:
+        """POST /api/tasks/consult/remove {entry: {id, date, destinataire, resume}}.
+
+        Suppression ciblee : le serveur relit le registre et ne retire que la
+        ligne visee (et ses doublons exacts). Renvoie les consultations
+        restantes pour que le dashboard se resynchronise sur le fichier.
+        """
+        body = self._read_json_body()
+        entry = body.get("entry")
+        if not isinstance(entry, dict) or not str(entry.get("id", "")).strip():
+            return self._send_error_json(400, "entry {id, date, destinataire, resume} requis")
+        removed, remaining = consult_registry.remove_entry(
+            self.config.workspace / "consult.md", entry)
+        self._send_json({"ok": True, "removed": removed, "entries": remaining})
 
     def _api_tasks_tosend_get(self) -> None:
         ts_dir = self.config.workspace / "to-send"

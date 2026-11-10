@@ -337,14 +337,38 @@ Compter les orphelins pour le compte-rendu.
 ### `consult.md`
 
 Collecter les `finalization.consult_entry` non null (do-consult-and-decide +
-do-other). Créer `consult.md` à la racine avec en-tête si absent :
-```markdown
-# Registre des consultations
+do-other), chacun sous la forme `{"id", "date", "destinataire", "resume"}`.
+**Ne jamais éditer `consult.md` à la main** (ni réécrire le fichier, ni
+ajouter des lignes par `Write`) : passer exclusivement par
+`lib.consult.append_entries`, qui crée le fichier avec son en-tête si absent
+et **ignore toute ligne déjà présente** — une reprise ou un `--retry` ne
+duplique donc jamais le registre (bug corrigé en v2.4.1 : des blocs entiers
+avaient été recopiés). Pipes et sauts de ligne des champs sont neutralisés.
 
-| ID | Date | Destinataire | Résumé |
-|----|------|-------------|--------|
+```bash
+python3 - <<'PY'
+import sys, os, json
+plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not plugin_root:
+    import shutil
+    exe = shutil.which("todomail-plugin-root")
+    if exe:
+        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
+if not plugin_root:
+    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
+sys.path.insert(0, plugin_root)
+from pathlib import Path
+from lib.state import workspace_dir
+from lib.consult import append_entries
+
+entries = [
+    # {"id": "2026-06-18_14h00m00", "date": "2026-06-22",
+    #  "destinataire": "Véronique Bicilli (DPEE)", "resume": "..."},
+]
+added, skipped = append_entries(workspace_dir() / "consult.md", entries)
+print(json.dumps({"consult_added": added, "consult_skipped": skipped}))
+PY
 ```
-Ajouter les lignes collectées. Écriture séquentielle.
 
 ### Mémoire
 
