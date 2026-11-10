@@ -7,6 +7,25 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.4.1] - 2026-11-10
+
+Correction du suivi des consultations dans le dashboard : la carte « marquée comme traitée » restait affichée jusqu'au rechargement, et le filtre texte semblait sans effet. Cause commune : des clés React dupliquées.
+
+### Corrigé
+
+- **Carte « traitée » qui ne disparaît pas / filtre inopérant** — la vue *Suivi consultations* utilisait l'`ID` du mail comme clé React. Or `consult.md` contient plusieurs lignes par ID (consultations légitimes de destinataires différents, et surtout des doublons exacts : 130 lignes pour 86 consultations distinctes dans le workspace de référence). Avec des clés dupliquées, React ne sait plus réconcilier la liste : les cartes retirées ou filtrées restent dans le DOM (147 avertissements « Encountered two children with the same key » en console). La suppression côté serveur réussissait pourtant, d'où la carte qui ne disparaissait qu'au rechargement. La clé est désormais la ligne entière (ID + date + destinataire + résumé) et les doublons exacts ne produisent qu'une carte.
+- **Suppression d'une consultation trop large et sujette aux pertes** — « Marquer comme traité » retirait *toutes* les lignes du même ID (y compris les autres destinataires) et réécrivait l'intégralité de `consult.md` depuis l'état du navigateur, écrasant toute ligne ajoutée entre-temps par un `/process-todo`. Nouvelle route `POST /api/tasks/consult/remove` : le serveur relit le fichier et ne retire que la ligne visée et ses doublons exacts ; le dashboard se resynchronise sur la liste renvoyée. Le `PUT` historique reste servi pour compatibilité.
+- **Doublons dans `consult.md`** — l'étape 5 de `/process-todo` ajoutait les lignes sans contrôle : une reprise ou un `--retry` recopiait des blocs entiers. Elle passe désormais par `lib.consult.append_entries`, idempotent.
+- **Parsing de la table** — les cellules vides décalaient les colonnes (`filter(c => c)`), et un `|` dans le résumé tronquait la ligne. Parsing positionnel, pipes du résumé recollés, champs assainis à l'écriture.
+- **Compteur du badge** — compte les consultations distinctes (cohérent avec le nombre de cartes) au lieu des lignes brutes.
+- **Clé React des erreurs du panneau d'erreurs** — rendue unique (`mail_id` + rang), même défaut latent si un mail avait plusieurs erreurs.
+
+### Ajouté
+
+- **`lib/consult.py`** — source unique du format de `consult.md` : `parse_entries`, `append_entries` (idempotent), `remove_entry` (ciblé, relit le disque), `dedupe_file` (+ CLI `python3 -m lib.consult --dedupe <consult.md>` pour nettoyer un registre existant).
+- **Rafraîchissement de la vue Tâches au polling** — quand un cycle Claude modifie le workspace, la section ouverte (consultations, mails à envoyer, travail à faire) est rechargée, plus seulement les compteurs.
+- **Tests `lib/tests/test_consult.py`** — 16 tests stdlib `unittest` : en-tête/séparateur, doublons exacts, même ID / destinataires différents, cellules vides et pipes, ajout idempotent sur ré-exécution, suppression ciblée préservant le texte hors table et les lignes ajoutées après l'affichage.
+
 ## [2.4.0] - 2026-07-07
 
 Durcissement du serveur dashboard, issu du diagnostic du 2026-07-07 : un processus serveur au contexte de sécurité macOS dégradé (parent disparu après une mise à jour du plugin) recevait des `PermissionError` sur des fichiers pourtant valides et affichait un dashboard intégralement vide — mémoire/tâches en 403 muets, catégories « 0 mails » silencieuses — sans aucune trace exploitable côté serveur.

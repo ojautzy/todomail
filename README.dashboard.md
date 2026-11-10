@@ -278,11 +278,12 @@ Chaque section affiche un badge compteur dans la sidebar.
 
 ### Section « Suivi consultations »
 
-Lit et parse le fichier `consult.md` à la racine du répertoire de travail (table markdown avec colonnes : ID, Date, Destinataire, Résumé).
+Lit le fichier `consult.md` à la racine du répertoire de travail (table markdown avec colonnes : ID, Date, Destinataire, Résumé). Depuis la v2.4.1, le parsing est fait côté serveur par `lib/consult.py` (`GET /api/tasks/consult` renvoie `entries`).
 
-* **Carte par entrée** : affiche ID, date, destinataire et résumé
+* **Carte par consultation distincte** : affiche ID, date, destinataire et résumé. L'identité d'une consultation est la **ligne entière**, pas l'ID : un même mail peut donner lieu à plusieurs consultations (destinataires différents) ; les doublons exacts ne produisent qu'une carte
 * **Filtre texte** : recherche sur tous les champs
-* **Suppression** : checkbox avec confirmation inline (icônes check/x) — retire la ligne de `consult.md` et réécrit le fichier
+* **Marquer comme traité** : confirmation inline (icônes check/x) puis `POST /api/tasks/consult/remove` — le serveur relit `consult.md` et ne retire que cette ligne (et ses doublons exacts), sans toucher aux lignes ajoutées entre-temps ; le dashboard se resynchronise sur la liste renvoyée
+* **Rafraîchissement** : la section ouverte est rechargée quand un cycle Claude modifie le workspace (polling 3 s)
 * **Toast** de confirmation après suppression
 
 ### Section « Mails à envoyer »

@@ -105,6 +105,17 @@ Enum `ErrorAction` : `CONTINUE`, `STOP_AND_ASK`, `RETRY_LATER`
 
 Classe `ErrorHandler(mode)` : gere les erreurs selon le mode configure.
 
+### `consult.py` — Registre des consultations `consult.md` (v2.4.1)
+
+Source unique du format de `consult.md`, partagee par le serveur du dashboard et `/process-todo` (etape 5).
+
+- `parse_entries(text, dedupe=True)` — consultations dans l'ordre du fichier, doublons exacts rendus une fois
+- `append_entries(path, entries)` — ajout **idempotent** (cree l'en-tete si absent, ignore les lignes deja presentes) ; retourne `(ajoutees, ignorees)`
+- `remove_entry(path, entry)` — relit le fichier et retire la ligne visee et ses doublons exacts, en preservant tout le reste ; retourne `(retirees, restantes)`
+- `dedupe_file(path)` — nettoyage ponctuel des doublons exacts (`python3 -m lib.consult --dedupe <consult.md>`)
+
+Identite d'une consultation = la ligne entiere normalisee (ID + Date + Destinataire + Resume), jamais l'ID seul.
+
 ### `config.py` — Config partagee (workspace) et machine-locale
 
 Depuis la v2.3.0 (usage multi-Mac, workspace synchronise iCloud), la config

@@ -13,7 +13,7 @@ todomail/
 ├── skills/*/SKILL.md            ← skills (sort-mails, agenda, disponibilites, detection-conflits, briefing, check-agenda, memory-management, classify-attachment, read-odf)
 ├── skills/dashboard.html        ← dashboard interactif (copie unique, servie exclusivement par lib/serve_dashboard.py depuis v2.3.0)
 ├── hooks/                       ← 5 hooks Claude Code + hooks.json (session_start, enforce_classify, invalidate_dashboard_cache, inject_context, pre_compact)
-├── lib/                         ← helpers Python (state, fs_utils, rag_cache, error_modes, config) + serve_dashboard.py (serveur HTTP du dashboard, v2.2.0)
+├── lib/                         ← helpers Python (state, fs_utils, rag_cache, error_modes, config, consult) + serve_dashboard.py (serveur HTTP du dashboard, v2.2.0)
 ├── CHANGELOG.md                 ← historique des versions
 ├── CONNECTORS.md                ← documentation des connecteurs MCP
 ├── CLOUDFLARE-DASHBOARD.md      ← mise en service du dashboard sur Internet (tunnel + Cloudflare Access, v2.2.0)
@@ -88,6 +88,7 @@ Le repertoire `lib/` contient des helpers Python partages par les skills et comm
 - `lib/rag_cache.py` — cache RAG en memoire de session
 - `lib/error_modes.py` — strategie d'erreur (`lenient`/`strict`/`resume`)
 - `lib/config.py` — lecture/ecriture du `.todomail-config.json` (config workspace, desambiguation serveur MCP)
+- `lib/consult.py` — registre `consult.md` : parsing, ajout idempotent, suppression ciblee (v2.4.1). **Ne jamais editer `consult.md` a la main** depuis une commande
 
 Ces helpers sont exploités par toutes les commandes et tous les skills du plugin depuis les Phases 2 à 6.
 Voir `lib/README.md` pour la documentation complete.

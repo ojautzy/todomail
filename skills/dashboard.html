@@ -39,7 +39,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo, useCallback } = React;
+        const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
         const SUBDIRS = [
             { key: "trash", label: "Corbeille", icon: "trash-2", displayField: "summary", displayLabel: "Resumé" },
@@ -77,27 +77,47 @@
             return { meta, body: match[2] };
         }
 
-        // Parse consult.md markdown table into array of objects
-        function parseConsultMd(content) {
-            const lines = content.split('\n').filter(l => l.trim().startsWith('|'));
-            if (lines.length < 2) return [];
-            // Skip header and separator rows
-            return lines.slice(2).map(line => {
-                const cells = line.split('|').map(c => c.trim()).filter(c => c);
-                if (cells.length >= 4) {
-                    return { id: cells[0], date: cells[1], destinataire: cells[2], resume: cells[3] };
-                }
-                return null;
-            }).filter(Boolean);
+        // v2.4.1 — Identite d'une consultation = la ligne entiere, PAS l'ID :
+        // un meme mail peut donner lieu a plusieurs consultations, et le
+        // registre contenait des doublons exacts. Utiliser `entry.id` comme
+        // cle React provoquait des cles dupliquees : React ne savait plus
+        // retirer les cartes (carte « traitee » qui restait affichee) ni
+        // appliquer le filtre (cartes perimees laissees dans le DOM).
+        const consultUid = (e) => [e.id, e.date, e.destinataire, e.resume].join('\u241F');
+
+        // Normalise + deduplique une liste de consultations et pose la cle `uid`.
+        function withConsultUids(entries) {
+            const seen = new Set();
+            const out = [];
+            (entries || []).forEach(raw => {
+                if (!raw) return;
+                const e = {
+                    id: String(raw.id || ''), date: String(raw.date || ''),
+                    destinataire: String(raw.destinataire || ''), resume: String(raw.resume || ''),
+                };
+                const uid = consultUid(e);
+                if (seen.has(uid)) return;
+                seen.add(uid);
+                out.push({ ...e, uid });
+            });
+            return out;
         }
 
-        // Rebuild consult.md content from entries
-        function buildConsultMd(entries) {
-            let md = "# Registre des consultations\n\n| ID | Date | Destinataire | Résumé |\n|----|------|-------------|--------|\n";
-            entries.forEach(e => {
-                md += `| ${e.id} | ${e.date} | ${e.destinataire} | ${e.resume} |\n`;
+        // Repli si le serveur ne fournit pas `entries` (serveur <= v2.4.0) :
+        // parse la table markdown (cellules positionnelles, en-tete et
+        // separateur ecartes ; la logique de reference est lib/consult.py).
+        function parseConsultMd(content) {
+            const rows = [];
+            content.split('\n').forEach(line => {
+                const t = line.trim();
+                if (!t.startsWith('|')) return;
+                const cells = t.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+                if (cells.length < 4) return;
+                if (cells.every(c => c === '' || /^:?-{2,}:?$/.test(c))) return;
+                if (cells[0].toLowerCase() === 'id') return;
+                rows.push({ id: cells[0], date: cells[1], destinataire: cells[2], resume: cells.slice(3).join(' | ') });
             });
-            return md;
+            return rows;
         }
 
         // Extract recipient display name from filename like "jean-martin_01.md"
@@ -149,7 +169,7 @@
             markerDismiss(mailId) { return this._json('POST', '/api/markers/dismiss', { mail_id: mailId }); },
             tasksCounts() { return this._json('GET', '/api/tasks/counts'); },
             consultGet() { return this._json('GET', '/api/tasks/consult'); },
-            consultPut(content) { return this._json('PUT', '/api/tasks/consult', { content }); },
+            consultRemove(entry) { return this._json('POST', '/api/tasks/consult/remove', { entry }); },
             toSendGet() { return this._json('GET', '/api/tasks/to-send'); },
             toSendPut(name, content) { return this._json('PUT', `/api/tasks/to-send/${encodeURIComponent(name)}`, { content }); },
             toSendDelete(name) { return this._json('DELETE', `/api/tasks/to-send/${encodeURIComponent(name)}`); },
@@ -213,6 +233,14 @@
             const [memorySearch, setMemorySearch] = useState('');
             const [expandedMemoryCard, setExpandedMemoryCard] = useState(null);
             const [memoryCounts, setMemoryCounts] = useState({ claude: 0, people: 0, projects: 0, context: 0 });
+
+            // v2.4.1 : refs lues par le tick de polling (closure figee sur
+            // [rootHandle, activeSubdir]) pour rafraichir la vue Taches
+            // ouverte quand un cycle Claude modifie consult.md / to-send / to-work.
+            const activeViewRef = useRef(activeView);
+            activeViewRef.current = activeView;
+            const activeTaskSectionRef = useRef(activeTaskSection);
+            activeTaskSectionRef.current = activeTaskSection;
 
             const activeConfig = SUBDIRS.find(s => s.key === activeSubdir);
             const defaultAction = activeSubdir === 'trash' ? 'delete' : 'other';
@@ -431,6 +459,12 @@
                 // reflete le lock frais — on ne peut pas se fier a `isLocked`
                 // de la closure (setState pas encore propage dans le meme tick).
                 ensureAllInstructions(handle, { lockedNow: !!opts.lockedNow });
+                if (activeViewRef.current === 'tasks') {
+                    const sec = activeTaskSectionRef.current;
+                    if (sec === 'consult') loadConsultEntries(handle);
+                    else if (sec === 'to-send') loadToSendFiles(handle);
+                    else if (sec === 'to-work') loadToWorkTasks(handle);
+                }
                 if (opts.withToast) showToast('refreshed');
             };
 
@@ -651,7 +685,9 @@
             const loadConsultEntries = async (handle) => {
                 try {
                     const data = await api.consultGet();
-                    const entries = parseConsultMd(data.content || '');
+                    const entries = withConsultUids(Array.isArray(data.entries)
+                        ? data.entries
+                        : parseConsultMd(data.content || ''));
                     setConsultEntries(entries);
                     setTaskCounts(prev => ({ ...prev, consult: entries.length }));
                 } catch (_) {
@@ -722,10 +758,17 @@
                 }
             }, [activeView]);
 
-            const removeConsultEntry = async (entryId) => {
-                const remaining = consultEntries.filter(e => e.id !== entryId);
+            // v2.4.1 : suppression ciblee cote serveur (relit le fichier, ne
+            // retire que cette ligne et ses doublons exacts) puis resynchro
+            // sur les consultations renvoyees — plus de reecriture integrale
+            // du registre depuis un etat navigateur potentiellement perime.
+            const removeConsultEntry = async (entry) => {
                 try {
-                    await api.consultPut(buildConsultMd(remaining));
+                    const data = await api.consultRemove({
+                        id: entry.id, date: entry.date,
+                        destinataire: entry.destinataire, resume: entry.resume,
+                    });
+                    const remaining = withConsultUids(data.entries || []);
                     setConsultEntries(remaining);
                     setTaskCounts(prev => ({ ...prev, consult: remaining.length }));
                     showToast('saved');
@@ -803,10 +846,7 @@
                 const term = taskSearchTerm.toLowerCase();
                 if (!term) return consultEntries;
                 return consultEntries.filter(e =>
-                    e.id.toLowerCase().includes(term) ||
-                    e.date.toLowerCase().includes(term) ||
-                    e.destinataire.toLowerCase().includes(term) ||
-                    e.resume.toLowerCase().includes(term)
+                    [e.id, e.date, e.destinataire, e.resume].some(v => (v || '').toLowerCase().includes(term))
                 );
             }, [consultEntries, taskSearchTerm]);
 
@@ -1132,8 +1172,8 @@
                                                     </button>
                                                 </div>
                                                 <ul className="space-y-2">
-                                                    {displayedErrors.map(e => (
-                                                        <li key={e.mail_id} className="flex items-start gap-3 bg-white dark:bg-darkCard rounded-xl p-3 text-xs">
+                                                    {displayedErrors.map((e, idx) => (
+                                                        <li key={`${e.mail_id}#${idx}`} className="flex items-start gap-3 bg-white dark:bg-darkCard rounded-xl p-3 text-xs">
                                                             <div className="flex-1 min-w-0">
                                                                 <div className="font-mono font-bold text-slate-700 dark:text-slate-200 truncate">{e.mail_id}</div>
                                                                 <div className="text-slate-500 dark:text-slate-400 mt-0.5">
@@ -1362,7 +1402,7 @@
                                     {activeTaskSection === "consult" && (
                                         <div className="space-y-3">
                                             {filteredConsult.map(entry => (
-                                                <div key={entry.id} className="animate-slide-up bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-2xl group hover:shadow-xl transition-all">
+                                                <div key={entry.uid} className="animate-slide-up bg-white dark:bg-darkCard border border-slate-200 dark:border-slate-800 rounded-2xl group hover:shadow-xl transition-all">
                                                     <div className="flex items-center">
                                                         <div className="flex-1 p-5">
                                                             <div className="flex items-center gap-3 mb-1">
@@ -1373,10 +1413,10 @@
                                                             <p className="text-[10px] text-slate-400 font-mono mt-1">ID: {entry.id}</p>
                                                         </div>
                                                         <div className="p-5">
-                                                            {confirmDelete?.type === 'consult' && confirmDelete?.key === entry.id ? (
+                                                            {confirmDelete?.type === 'consult' && confirmDelete?.key === entry.uid ? (
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="text-xs text-red-500 font-bold">Confirmer ?</span>
-                                                                    <button onClick={() => removeConsultEntry(entry.id)} className="p-1.5 bg-red-100 dark:bg-red-900/30 text-red-600 rounded-lg hover:bg-red-200 transition-all">
+                                                                    <button onClick={() => removeConsultEntry(entry)} className="p-1.5 bg-red-100 dark:bg-red-900/30 text-red-600 rounded-lg hover:bg-red-200 transition-all">
                                                                         <Icon name="check" size={14} />
                                                                     </button>
                                                                     <button onClick={() => setConfirmDelete(null)} className="p-1.5 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-lg hover:bg-slate-200 transition-all">
@@ -1385,7 +1425,7 @@
                                                                 </div>
                                                             ) : (
                                                                 <button
-                                                                    onClick={() => setConfirmDelete({ type: 'consult', key: entry.id, label: entry.destinataire })}
+                                                                    onClick={() => setConfirmDelete({ type: 'consult', key: entry.uid, label: entry.destinataire })}
                                                                     className="p-2 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
                                                                     title="Marquer comme traité"
                                                                 >
