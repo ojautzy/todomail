@@ -7,6 +7,18 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.4.3] - 2026-11-10
+
+Les réécritures atomiques de `lib/` rendaient lisible par tous un fichier privé : `consult.md` (créé en `0o600` par Claude) repassait en `0o644` à chaque « Marquer comme traité » du dashboard, à chaque ajout par `/process-todo` et lors du dédoublonnage.
+
+### Corrigé
+
+- **Droits des fichiers conservés à la réécriture** — nouveau helper `copy_mode_from_existing()` (`lib/fs_utils.py`) qui reporte les droits du fichier existant sur le `.tmp` avant `os.replace`. Appliqué à `lib/consult.py` (ajout, suppression ciblée, dédoublonnage) et à `atomic_write_json` (`state.json`, `instructions.json`, `pending_emails.json`…). Un nouveau fichier garde les droits par défaut (umask).
+
+### Ajouté
+
+- **Tests `TestDroits`** dans `lib/tests/test_consult.py` — 6 tests : `0o600` conservé après suppression, ajout, dédoublonnage et `atomic_write_json` ; `0o644` conservé ; droits par défaut pour un nouveau fichier.
+
 ## [2.4.2] - 2026-11-10
 
 Import du plugin dans Claude (plugins hébergés sur claude.ai) refusé par le validateur : d'abord « Plugin contains a top-level bin/ directory ('bin/todomail-plugin-root') », puis « SKILL.md description cannot contain XML tags ». Le répertoire `bin/` introduit en v2.3.1 est supprimé et remplacé par un mécanisme de résolution de la racine du plugin compatible ; les descriptions sont assainies.

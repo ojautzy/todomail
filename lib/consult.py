@@ -26,7 +26,7 @@ Invariants garantis par ce module (corrige en v2.4.1) :
   temps par un cycle, texte hors table — est preserve. L'ancien PUT
   reecrivait tout le fichier depuis l'etat (potentiellement perime) du
   navigateur.
-- Ecriture atomique (.tmp + os.replace).
+- Ecriture atomique (.tmp + os.replace), droits du fichier existant conserves (v2.4.3).
 
 Stdlib uniquement.
 """
@@ -38,6 +38,8 @@ import re
 import sys
 from pathlib import Path
 from typing import Iterable
+
+from lib.fs_utils import copy_mode_from_existing
 
 FIELDS = ("id", "date", "destinataire", "resume")
 
@@ -136,6 +138,9 @@ def _atomic_write_text(path: Path, text: str) -> None:
     tmp = path.with_name(path.name + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(text)
+    # v2.4.3 : conserver les droits du registre existant (0o600 cree par
+    # Claude) — sans cela os.replace le passait en 0o644.
+    copy_mode_from_existing(path, tmp)
     os.replace(str(tmp), str(path))
 
 
