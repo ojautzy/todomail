@@ -11,19 +11,24 @@ allowed-tools: Read, Bash(python3:*), Bash(nohup:*), Bash(lsof:*), Bash(curl:*),
 
 ## Préambule — import des helpers lib/
 
-Tout bloc Python qui importe `lib.*` résout la racine du plugin via l'exécutable `todomail-plugin-root` (répertoire `bin/` du plugin, sur le PATH du tool Bash — `CLAUDE_PLUGIN_ROOT` n'est jamais exporté aux sous-processus Bash ; cf. CLAUDE.md) :
+Tout bloc Python qui importe `lib.*` résout la racine du plugin par `_todomail_root()` (variable `CLAUDE_PLUGIN_ROOT`, sinon chemin substitué inline par Claude Code, sinon pointeur `~/.config/todomail/plugin_root` écrit par le hook SessionStart ; cf. CLAUDE.md) :
 
 ```bash
 python3 - <<'PY'
 import os, sys
-plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-if not plugin_root:
-    import shutil
-    exe = shutil.which("todomail-plugin-root")
-    if exe:
-        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
-if not plugin_root:
-    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
+def _todomail_root():
+    # v2.4.2 : env (hooks) > substitution inline Claude Code > pointeur ecrit par le hook SessionStart
+    cands = [os.environ.get("CLAUDE_PLUGIN_ROOT", ""), "${CLAUDE_PLUGIN_ROOT}"]
+    home = os.environ.get("TODOMAIL_CONFIG_HOME") or os.path.expanduser("~/.config/todomail")
+    try:
+        cands.append(open(os.path.join(home, "plugin_root"), encoding="utf-8").read().strip())
+    except OSError:
+        pass
+    for c in cands:
+        if c and not c.startswith("$") and os.path.isfile(os.path.join(c, "lib", "state.py")):
+            return c
+    raise RuntimeError("racine du plugin todomail introuvable : ouvrir une nouvelle session Claude (le hook SessionStart l'enregistre dans ~/.config/todomail/plugin_root)")
+plugin_root = _todomail_root()
 sys.path.insert(0, plugin_root)
 from lib.state import workspace_dir
 from lib.config import get_dashboard_config, save_dashboard_config
@@ -40,14 +45,19 @@ Depuis la v2.3.0, le bloc `dashboard` est **machine-local** (`~/.config/todomail
 ```bash
 python3 - <<'PY'
 import os, sys, json
-plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-if not plugin_root:
-    import shutil
-    exe = shutil.which("todomail-plugin-root")
-    if exe:
-        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
-if not plugin_root:
-    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
+def _todomail_root():
+    # v2.4.2 : env (hooks) > substitution inline Claude Code > pointeur ecrit par le hook SessionStart
+    cands = [os.environ.get("CLAUDE_PLUGIN_ROOT", ""), "${CLAUDE_PLUGIN_ROOT}"]
+    home = os.environ.get("TODOMAIL_CONFIG_HOME") or os.path.expanduser("~/.config/todomail")
+    try:
+        cands.append(open(os.path.join(home, "plugin_root"), encoding="utf-8").read().strip())
+    except OSError:
+        pass
+    for c in cands:
+        if c and not c.startswith("$") and os.path.isfile(os.path.join(c, "lib", "state.py")):
+            return c
+    raise RuntimeError("racine du plugin todomail introuvable : ouvrir une nouvelle session Claude (le hook SessionStart l'enregistre dans ~/.config/todomail/plugin_root)")
+plugin_root = _todomail_root()
 sys.path.insert(0, plugin_root)
 from lib.state import workspace_dir
 from lib.config import get_dashboard_config
@@ -71,14 +81,19 @@ PY
 ```bash
 python3 - <<'PY'
 import os, sys
-plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-if not plugin_root:
-    import shutil
-    exe = shutil.which("todomail-plugin-root")
-    if exe:
-        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
-if not plugin_root:
-    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
+def _todomail_root():
+    # v2.4.2 : env (hooks) > substitution inline Claude Code > pointeur ecrit par le hook SessionStart
+    cands = [os.environ.get("CLAUDE_PLUGIN_ROOT", ""), "${CLAUDE_PLUGIN_ROOT}"]
+    home = os.environ.get("TODOMAIL_CONFIG_HOME") or os.path.expanduser("~/.config/todomail")
+    try:
+        cands.append(open(os.path.join(home, "plugin_root"), encoding="utf-8").read().strip())
+    except OSError:
+        pass
+    for c in cands:
+        if c and not c.startswith("$") and os.path.isfile(os.path.join(c, "lib", "state.py")):
+            return c
+    raise RuntimeError("racine du plugin todomail introuvable : ouvrir une nouvelle session Claude (le hook SessionStart l'enregistre dans ~/.config/todomail/plugin_root)")
+plugin_root = _todomail_root()
 sys.path.insert(0, plugin_root)
 from lib.state import workspace_dir
 from lib.config import save_dashboard_config, local_config_path
@@ -120,14 +135,19 @@ Le log est machine-local (`~/.config/todomail/<slug>/logs/serve_dashboard.log`).
 ```bash
 LOG_FILE="$(python3 - <<'PY'
 import os, sys
-plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-if not plugin_root:
-    import shutil
-    exe = shutil.which("todomail-plugin-root")
-    if exe:
-        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
-if not plugin_root:
-    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
+def _todomail_root():
+    # v2.4.2 : env (hooks) > substitution inline Claude Code > pointeur ecrit par le hook SessionStart
+    cands = [os.environ.get("CLAUDE_PLUGIN_ROOT", ""), "${CLAUDE_PLUGIN_ROOT}"]
+    home = os.environ.get("TODOMAIL_CONFIG_HOME") or os.path.expanduser("~/.config/todomail")
+    try:
+        cands.append(open(os.path.join(home, "plugin_root"), encoding="utf-8").read().strip())
+    except OSError:
+        pass
+    for c in cands:
+        if c and not c.startswith("$") and os.path.isfile(os.path.join(c, "lib", "state.py")):
+            return c
+    raise RuntimeError("racine du plugin todomail introuvable : ouvrir une nouvelle session Claude (le hook SessionStart l'enregistre dans ~/.config/todomail/plugin_root)")
+plugin_root = _todomail_root()
 sys.path.insert(0, plugin_root)
 from lib.state import local_runtime_dir
 print(local_runtime_dir() / "serve_dashboard.log")
@@ -140,7 +160,8 @@ Puis lancer le serveur en arrière-plan, détaché de la session Claude (survit 
 
 ```bash
 PORT=8770   # port configuré — lancer depuis le workspace (le serveur résout workspace_dir() via le cwd)
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(todomail-plugin-root)}"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"   # substitue inline par Claude Code ; sinon repli sur le pointeur du hook SessionStart
+[ -f "$PLUGIN_ROOT/lib/state.py" ] || PLUGIN_ROOT="$(cat "${TODOMAIL_CONFIG_HOME:-$HOME/.config/todomail}/plugin_root" 2>/dev/null)"
 PYTHONPATH="$PLUGIN_ROOT" \
   nohup python3 -m lib.serve_dashboard --port $PORT \
   >> "$LOG_FILE" 2>&1 &

@@ -9,7 +9,6 @@ todomail/
 ├── .claude-plugin/plugin.json   ← manifeste du plugin (source de vérité pour la version)
 ├── commands/*.md                ← commandes utilisateur (/start, /dashboard, /check-inbox, /process-todo, /briefing, /check-agenda)
 ├── agents/*.md                  ← agents autonomes (mail-prefilter)
-├── bin/                         ← exécutables sur le PATH du tool Bash (todomail-plugin-root, v2.3.1)
 ├── skills/*/SKILL.md            ← skills (sort-mails, agenda, disponibilites, detection-conflits, briefing, check-agenda, memory-management, classify-attachment, read-odf)
 ├── skills/dashboard.html        ← dashboard interactif (copie unique, servie exclusivement par lib/serve_dashboard.py depuis v2.3.0)
 ├── hooks/                       ← 5 hooks Claude Code + hooks.json (session_start, enforce_classify, invalidate_dashboard_cache, inject_context, pre_compact)
@@ -77,7 +76,7 @@ Suivre le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) :
 - Les noms de fichiers et répertoires sont en **kebab-case**
 - Les skills externes (plateforme Claude Code) sont préfixés « skill plateforme » dans la documentation
 - Les skills internes (ce plugin) sont préfixés « skill plugin » si distinction nécessaire
-- Les références internes utilisent `${CLAUDE_PLUGIN_ROOT}/` comme racine dans la prose ; dans un bloc Bash exécutable, la racine se résout via `$(todomail-plugin-root)` (voir « Import Python depuis les skills/commandes »)
+- Les références internes utilisent `${CLAUDE_PLUGIN_ROOT}/` comme racine dans la prose ; dans un bloc Bash exécutable, la racine se résout via `_todomail_root()` (voir « Import Python depuis les skills/commandes »)
 
 ## Utilitaires partages (lib/)
 
@@ -101,29 +100,38 @@ Toute commande ou skill qui modifie le filesystem ou `state.json` (`sort-mails`,
 
 Les helpers `lib/` vivent a la racine du plugin. Le LLM qui execute un skill ne doit JAMAIS chercher `skills/<skill>/lib/` ni `lib/` relatif au cwd — ce chemin est inexistant.
 
-**Contexte technique** (corrige en v2.3.1) : d'apres la doc officielle des plugins (section *Environment variables*), `${CLAUDE_PLUGIN_ROOT}` est substitue inline dans le contenu des skills/agents/hooks/configs MCP-LSP, et exporte comme variable d'environnement **uniquement aux processus hooks et serveurs MCP/LSP** — **jamais aux sous-processus Bash** lances par le LLM. Un bloc qui lit `os.environ.get("CLAUDE_PLUGIN_ROOT")` sans repli echoue donc systematiquement. La resolution fiable passe par le mecanisme officiel `bin/` : les executables du repertoire `bin/` du plugin sont sur le PATH du tool Bash tant que le plugin est actif, et `bin/todomail-plugin-root` affiche la racine du plugin.
+**Contexte technique** (corrige en v2.3.1, revu en v2.4.2) : d'apres la doc officielle des plugins (section *Environment variables*), `${CLAUDE_PLUGIN_ROOT}` est substitue inline dans le contenu des skills/agents/hooks/configs MCP-LSP, et exporte comme variable d'environnement **uniquement aux processus hooks et serveurs MCP/LSP** — **jamais aux sous-processus Bash** lances par le LLM. Un bloc qui lit `os.environ.get("CLAUDE_PLUGIN_ROOT")` sans repli echoue donc systematiquement.
+
+**Interdit : repertoire `bin/`** — la v2.3.1 resolvait la racine via `bin/todomail-plugin-root` (executables `bin/` mis sur le PATH du tool Bash). Les plugins heberges sur claude.ai **refusent** tout `bin/` de premier niveau (non visible sur la surface d'approbation admin) : l'import du zip echoue. Ne jamais le reintroduire ; declarer les points d'entree executables via hooks, commandes ou mcpServers.
+
+La resolution passe par `_todomail_root()`, qui essaie dans l'ordre : (1) la variable `CLAUDE_PLUGIN_ROOT` (hooks) ; (2) la chaine `"${CLAUDE_PLUGIN_ROOT}"` du bloc, **substituee inline** par Claude Code au chargement du skill/commande (ignoree si elle commence encore par `$`) ; (3) le pointeur machine-local `~/.config/todomail/plugin_root` (surchargeable via `$TODOMAIL_CONFIG_HOME`), **ecrit a chaque demarrage de session par `hooks/session_start.py`** a partir de son propre `__file__`. Un candidat n'est retenu que s'il contient `lib/state.py`.
 
 **Pattern canonique** pour tout bloc Bash qui importe un module `lib.*` (resolution cote Python : le bloc commence par `python3`, ce qui le maintient dans l'allowlist `Bash(python3:*)` des frontmatters) :
 
 ```bash
 python3 - <<'PY'
 import sys, os
-plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-if not plugin_root:
-    import shutil
-    exe = shutil.which("todomail-plugin-root")
-    if exe:
-        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
-if not plugin_root:
-    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
+def _todomail_root():
+    # v2.4.2 : env (hooks) > substitution inline Claude Code > pointeur ecrit par le hook SessionStart
+    cands = [os.environ.get("CLAUDE_PLUGIN_ROOT", ""), "${CLAUDE_PLUGIN_ROOT}"]
+    home = os.environ.get("TODOMAIL_CONFIG_HOME") or os.path.expanduser("~/.config/todomail")
+    try:
+        cands.append(open(os.path.join(home, "plugin_root"), encoding="utf-8").read().strip())
+    except OSError:
+        pass
+    for c in cands:
+        if c and not c.startswith("$") and os.path.isfile(os.path.join(c, "lib", "state.py")):
+            return c
+    raise RuntimeError("racine du plugin todomail introuvable : ouvrir une nouvelle session Claude (le hook SessionStart l'enregistre dans ~/.config/todomail/plugin_root)")
+plugin_root = _todomail_root()
 sys.path.insert(0, plugin_root)
 from lib.state import load_state, save_state, acquire_lock, release_lock
 # ...
 PY
 ```
 
-Pour un chemin en shell pur (scripts de skills, lancement du serveur dashboard), utiliser `"$(todomail-plugin-root)/..."` — jamais `"${CLAUDE_PLUGIN_ROOT}/..."` seul (variable vide dans un sous-processus Bash).
+Pour lancer un script du plugin, preferer un bloc `python3 - <<'PY'` avec ce preambule + `runpy` (voir `skills/read-odf/SKILL.md`). En shell pur (lancement du serveur dashboard), utiliser `PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"` suivi du repli `[ -f "$PLUGIN_ROOT/lib/state.py" ] || PLUGIN_ROOT="$(cat "${TODOMAIL_CONFIG_HOME:-$HOME/.config/todomail}/plugin_root")"` (voir `commands/dashboard.md`) — jamais `"${CLAUDE_PLUGIN_ROOT}/..."` seul.
 
-**Anti-pattern a ne jamais reproduire** : si un `import lib.X` renvoie `ModuleNotFoundError`, **ne pas** conclure « pas de lib externe, analyse directe en flux ». C'est un bug d'import, pas une caracteristique du skill. Verifier que `todomail-plugin-root` est disponible (`which todomail-plugin-root` — sinon le plugin n'est pas actif), fixer le `sys.path` et retenter. Les helpers sont indispensables — sans `acquire_lock`/`save_state`, le dashboard ne voit pas le cycle et l'idempotence (`safe_mv`) n'est pas garantie.
+**Anti-pattern a ne jamais reproduire** : si un `import lib.X` renvoie `ModuleNotFoundError`, **ne pas** conclure « pas de lib externe, analyse directe en flux ». C'est un bug d'import, pas une caracteristique du skill. Verifier que la racine est resolue (`cat ~/.config/todomail/plugin_root` — si absent, ouvrir une nouvelle session Claude pour que le hook SessionStart l'ecrive), fixer le `sys.path` et retenter. Les helpers sont indispensables — sans `acquire_lock`/`save_state`, le dashboard ne voit pas le cycle et l'idempotence (`safe_mv`) n'est pas garantie.
 
 Tout nouveau SKILL.md ou command.md qui touche `lib/` doit embarquer ce pattern en preambule explicite (voir `skills/sort-mails/SKILL.md`, `commands/check-inbox.md`, `commands/process-todo.md`, `commands/briefing.md`, `commands/check-agenda.md`).

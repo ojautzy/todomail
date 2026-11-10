@@ -96,6 +96,40 @@ def _log_smoke(payload: dict) -> None:
         pass
 
 
+def _write_plugin_root_pointer() -> None:
+    """Enregistre la racine du plugin dans `~/.config/todomail/plugin_root` (v2.4.2).
+
+    Les blocs Bash/Python des commandes et skills ne recoivent pas
+    `CLAUDE_PLUGIN_ROOT` (exporte aux seuls hooks/MCP) et le plugin ne peut
+    plus embarquer de `bin/` (refuse par les plugins heberges sur claude.ai).
+    Ce hook, lui, connait toujours son emplacement (`__file__`) : il publie
+    la racine pour le repli de `_todomail_root()`. Ecrit a CHAQUE session,
+    y compris hors workspace (indispensable pour `/start` dans un nouveau
+    workspace) ; fichier global machine-local, pas de slug. Atomique,
+    reecrit seulement si la valeur change. Jamais bloquant.
+    """
+    try:
+        root = str(Path(__file__).resolve().parent.parent)
+        env = os.environ.get("TODOMAIL_CONFIG_HOME")
+        home = Path(env) if env else Path.home() / ".config" / "todomail"
+        pointer = home / "plugin_root"
+        try:
+            if pointer.read_text(encoding="utf-8").strip() == root:
+                return
+        except OSError:
+            pass
+        home.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(home, 0o700)
+        except OSError:
+            pass
+        tmp = home / "plugin_root.tmp"
+        tmp.write_text(root + "\n", encoding="utf-8")
+        os.replace(str(tmp), str(pointer))
+    except Exception:
+        pass
+
+
 def _build_memory_cache(project: Path) -> dict:
     """Construit un index {nom -> chemin} des fichiers de memory/."""
     cache: dict = {"compiled_at": datetime.now(timezone.utc).isoformat(), "entries": {}}
@@ -257,6 +291,7 @@ def main() -> None:
         payload = {}
 
     _log_smoke(payload)
+    _write_plugin_root_pointer()  # v2.4.2 : avant la garde workspace (cf. docstring)
 
     project = _project_dir(payload)
 

@@ -7,16 +7,10 @@ description: >
   ou `unsure`. Utilisé exclusivement par le skill `sort-mails` comme étape de
   réduction avant l'analyse principale Opus 1M.
 
-  <example>
-  Context: sort-mails vient de lister 47 mails dans inbox/
-  user: "Pré-classifie ces 47 mails"
-  assistant: "Je lance l'agent mail-prefilter sur le batch de métadonnées."
-  <commentary>
-  L'agent reçoit la liste des métadonnées (from/subject/date/has_attachments/size)
-  en un seul prompt et renvoie un JSON par mail. Jamais lancé par mail : un seul
-  appel pour tout le batch.
-  </commentary>
-  </example>
+  Exemple : sort-mails vient de lister 47 mails dans inbox/ et demande
+  « Pré-classifie ces 47 mails » ; l'agent reçoit la liste des métadonnées
+  (from/subject/date/has_attachments/size) en un seul prompt et renvoie un
+  JSON par mail. Jamais lancé par mail : un seul appel pour tout le batch.
 
 model: haiku
 color: green

@@ -13,21 +13,27 @@ python3 -c "from lib import state, fs_utils, rag_cache, error_modes, config; pri
 ```
 
 Depuis un skill ou une commande (preambule obligatoire — la racine du
-plugin se resout via l'executable `todomail-plugin-root` du repertoire
-`bin/`, sur le PATH du tool Bash ; `CLAUDE_PLUGIN_ROOT` n'est jamais
-exporte aux sous-processus Bash) :
+plugin se resout par `_todomail_root()` : variable `CLAUDE_PLUGIN_ROOT`
+si presente, sinon chemin substitue inline par Claude Code, sinon pointeur
+`~/.config/todomail/plugin_root` ecrit par le hook SessionStart ; plus de
+`bin/` depuis la v2.4.2, refuse par claude.ai) :
 
 ```bash
 python3 - <<'PY'
 import sys, os
-plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-if not plugin_root:
-    import shutil
-    exe = shutil.which("todomail-plugin-root")
-    if exe:
-        plugin_root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
-if not plugin_root:
-    raise RuntimeError("racine du plugin todomail introuvable (ni CLAUDE_PLUGIN_ROOT ni todomail-plugin-root sur le PATH)")
+def _todomail_root():
+    # v2.4.2 : env (hooks) > substitution inline Claude Code > pointeur ecrit par le hook SessionStart
+    cands = [os.environ.get("CLAUDE_PLUGIN_ROOT", ""), "${CLAUDE_PLUGIN_ROOT}"]
+    home = os.environ.get("TODOMAIL_CONFIG_HOME") or os.path.expanduser("~/.config/todomail")
+    try:
+        cands.append(open(os.path.join(home, "plugin_root"), encoding="utf-8").read().strip())
+    except OSError:
+        pass
+    for c in cands:
+        if c and not c.startswith("$") and os.path.isfile(os.path.join(c, "lib", "state.py")):
+            return c
+    raise RuntimeError("racine du plugin todomail introuvable : ouvrir une nouvelle session Claude (le hook SessionStart l'enregistre dans ~/.config/todomail/plugin_root)")
+plugin_root = _todomail_root()
 sys.path.insert(0, plugin_root)
 from lib.state import load_state, acquire_lock, release_lock, update_checkpoint
 from lib.rag_cache import RagCache
