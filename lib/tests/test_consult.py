@@ -12,6 +12,8 @@ Exécution depuis la racine du plugin :
 Autonome (stdlib uniquement), aucune écriture hors tempdir.
 """
 
+import os
+import stat
 import sys
 import tempfile
 import unittest
@@ -28,6 +30,7 @@ from lib.consult import (  # noqa: E402
     parse_row,
     remove_entry,
 )
+from lib.fs_utils import atomic_write_json  # noqa: E402
 
 A = {"id": "2026-06-18_14h00m00", "date": "2026-06-22",
      "destinataire": "Véronique Bicilli (DPEE)", "resume": "Recensement SI à enjeu"}
@@ -146,6 +149,58 @@ class TestRemove(unittest.TestCase):
     def test_fichier_absent(self):
         self.assertEqual(remove_entry(self.path, A), (0, []))
         self.assertFalse(self.path.exists())
+
+
+class TestDroits(unittest.TestCase):
+    """v2.4.3 : la réécriture atomique conserve les droits du fichier.
+
+    Le registre réel est en 0o600 (créé par Claude) ; os.replace d'un .tmp
+    le passait en 0o644, y compris à chaque « Marquer comme traité ».
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "consult.md"
+        self.path.write_text(HEADER + row(A) + row(B) + row(A), encoding="utf-8")
+        os.chmod(self.path, 0o600)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def mode(self, p=None):
+        return stat.S_IMODE((p or self.path).stat().st_mode)
+
+    def test_remove_conserve_600(self):
+        remove_entry(self.path, B)
+        self.assertEqual(self.mode(), 0o600)
+
+    def test_append_conserve_600(self):
+        append_entries(self.path, [B2])
+        self.assertEqual(self.mode(), 0o600)
+
+    def test_dedupe_conserve_600(self):
+        self.assertEqual(dedupe_file(self.path), 1)
+        self.assertEqual(self.mode(), 0o600)
+
+    def test_conserve_aussi_644(self):
+        os.chmod(self.path, 0o644)
+        remove_entry(self.path, B)
+        self.assertEqual(self.mode(), 0o644)
+
+    def test_nouveau_fichier_droits_par_defaut(self):
+        new = Path(self.tmp.name) / "neuf.md"
+        append_entries(new, [A])
+        umask = os.umask(0)
+        os.umask(umask)
+        self.assertEqual(self.mode(new), 0o666 & ~umask)
+
+    def test_atomic_write_json_conserve_600(self):
+        p = Path(self.tmp.name) / "state.json"
+        atomic_write_json(p, {"a": 1})
+        os.chmod(p, 0o600)
+        atomic_write_json(p, {"a": 2})
+        self.assertEqual(self.mode(p), 0o600)
+        self.assertFalse(p.with_suffix(".json.tmp").exists())
 
 
 class TestDedupeFile(unittest.TestCase):

@@ -54,16 +54,35 @@ def mkdir_p(path: Path) -> None:
     Path(path).mkdir(parents=True, exist_ok=True)
 
 
+def copy_mode_from_existing(target: Path, tmp: Path) -> None:
+    """Report les droits du fichier `target` (s'il existe) sur `tmp` (v2.4.3).
+
+    A appeler avant `os.replace(tmp, target)` : sinon le fichier remplace
+    herite des droits par defaut du .tmp (umask, souvent 0o644) et un
+    fichier prive (0o600) devient lisible par tous. Best-effort, silencieux.
+    """
+    try:
+        mode = os.stat(target).st_mode & 0o7777
+    except OSError:
+        return  # nouveau fichier : droits par defaut (umask)
+    try:
+        os.chmod(tmp, mode)
+    except (OSError, NotImplementedError):
+        pass
+
+
 def atomic_write_json(path: Path, data: Any) -> None:
     """Write JSON atomically via .tmp + os.replace().
 
     Ensures no partial writes are visible. Creates parent dirs if needed.
+    Preserves the permissions of an existing file (v2.4.3).
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    copy_mode_from_existing(path, tmp)
     os.replace(str(tmp), str(path))
 
 
