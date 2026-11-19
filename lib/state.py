@@ -38,28 +38,32 @@ _DEFAULT_STATE = {
 def workspace_dir() -> Path:
     """Resolve la racine du workspace utilisateur.
 
-    Ordre :
+    Ordre (premier candidat portant le marqueur `.todomail-config.json`,
+    cf. `lib.workspace.is_todomail_workspace`) :
     1. `$CLAUDE_PROJECT_DIR` (defini par Claude Code dans les hooks ;
-       passe via le payload aux scripts ; les sous-processus Python
-       lances par un skill peuvent ne pas l'avoir, d'ou le fallback).
-    2. `os.getcwd()` si le repertoire contient un marqueur workspace
-       (`.todomail-config.json`). Sinon erreur explicite.
+       les sous-processus Python lances par un skill peuvent ne pas
+       l'avoir, d'ou le fallback).
+    2. `os.getcwd()`.
+
+    Depuis la v2.4.4, `$CLAUDE_PROJECT_DIR` n'est plus accepte sans
+    marqueur : le plugin se charge dans toutes les sessions Claude Code
+    et creait sinon `.todomail/` dans des projets sans rapport.
 
     Lever une exception est volontairement strict : sans workspace
     valide, aucune ecriture d'etat n'a de sens.
     """
+    from lib.workspace import MARKER_FILENAME, resolve_workspace
+
     env = os.environ.get("CLAUDE_PROJECT_DIR")
-    if env:
-        project = Path(env)
-        if project.is_dir():
-            return project
-    cwd = Path.cwd()
-    if (cwd / ".todomail-config.json").is_file():
-        return cwd
+    cwd = os.getcwd()
+    ws = resolve_workspace(env, cwd)
+    if ws is not None:
+        return ws
     raise RuntimeError(
-        "Workspace todomail introuvable : ni $CLAUDE_PROJECT_DIR ni un "
-        "cwd contenant .todomail-config.json. Lance /todomail:start "
-        "depuis le repertoire de travail pour initialiser."
+        f"Workspace todomail introuvable : ni $CLAUDE_PROJECT_DIR "
+        f"({env or 'non defini'}) ni le repertoire courant ({cwd}) ne "
+        f"contiennent {MARKER_FILENAME}. Lance /todomail:start depuis le "
+        "repertoire de travail pour l'initialiser."
     )
 
 

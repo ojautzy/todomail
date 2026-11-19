@@ -60,11 +60,11 @@ class RagCache:
         Aligne avec le refactor alpha.8 (tout le runtime dans .todomail/).
         """
         if path is None:
-            env = os.environ.get("CLAUDE_PROJECT_DIR")
-            if not env:
-                return
-            project = Path(env)
-            if not project.is_dir():
+            from lib.workspace import resolve_workspace
+
+            # v2.4.4 : jamais de .todomail/ hors d'un workspace marque
+            project = resolve_workspace(os.environ.get("CLAUDE_PROJECT_DIR"))
+            if project is None:
                 return
             path = project / ".todomail" / "rag_cache.json"
         path = Path(path)

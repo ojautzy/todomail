@@ -12,7 +12,7 @@ todomail/
 ├── skills/*/SKILL.md            ← skills (sort-mails, agenda, disponibilites, detection-conflits, briefing, check-agenda, memory-management, classify-attachment, read-odf)
 ├── skills/dashboard.html        ← dashboard interactif (copie unique, servie exclusivement par lib/serve_dashboard.py depuis v2.3.0)
 ├── hooks/                       ← 5 hooks Claude Code + hooks.json (session_start, enforce_classify, invalidate_dashboard_cache, inject_context, pre_compact)
-├── lib/                         ← helpers Python (state, fs_utils, rag_cache, error_modes, config, consult) + serve_dashboard.py (serveur HTTP du dashboard, v2.2.0)
+├── lib/                         ← helpers Python (state, fs_utils, rag_cache, error_modes, config, consult, workspace) + serve_dashboard.py (serveur HTTP du dashboard, v2.2.0)
 ├── CHANGELOG.md                 ← historique des versions
 ├── CONNECTORS.md                ← documentation des connecteurs MCP
 ├── CLOUDFLARE-DASHBOARD.md      ← mise en service du dashboard sur Internet (tunnel + Cloudflare Access, v2.2.0)
@@ -26,7 +26,7 @@ Depuis la v2.3.0 (Phase 8, usage multi-Mac avec workspace synchronisé iCloud), 
 
 **Partagé** — suit les mails, synchronisé iCloud avec le workspace :
 - `$CLAUDE_PROJECT_DIR/.todomail/` : state.json, invalidate.txt, retry_request.txt, errors_dismiss.txt, precompact_snapshot_*.json
-- `.todomail-config.json` (racine du workspace, schéma **v4**, **aucun secret**) : `schema_version`, `expected_rag_name`, `configured_at`. Sert aussi de **marqueur de détection du workspace** pour `lib/state.py` (`workspace_dir()`, fallback cwd) — ne jamais le supprimer ni le déplacer. `expected_rag_name` désambigue quand plusieurs serveurs MCP archiva sont connectés dans Claude Desktop ; vérifié en début de toutes les commandes MCP-sensibles (`/check-inbox`, `/process-todo`, `/briefing`, `/check-agenda`).
+- `.todomail-config.json` (racine du workspace, schéma **v4**, **aucun secret**) : `schema_version`, `expected_rag_name`, `configured_at`. Sert aussi de **marqueur de détection du workspace** — critère unique `lib/workspace.py:is_todomail_workspace()`, utilisé par `lib/state.py:workspace_dir()` (pour `$CLAUDE_PROJECT_DIR` comme pour le cwd) et en tête de chaque hook — ne jamais le supprimer ni le déplacer. `expected_rag_name` désambigue quand plusieurs serveurs MCP archiva sont connectés dans Claude Desktop ; vérifié en début de toutes les commandes MCP-sensibles (`/check-inbox`, `/process-todo`, `/briefing`, `/check-agenda`).
 - les répertoires métier (`inbox/`, `todo/`, `mails/`, `docs/`, `memory/`, `to-send/`, `to-work/`, `CLAUDE.md`)
 
 **Machine-local** — propre à chaque mac, hors iCloud, dans `~/.config/todomail/<slug>/` où `<slug> = <basename du workspace>-<sha256(realpath)[:8]>` (ex. `DIRMC-3fa2b91c` ; racine surchargeable via `$TODOMAIL_CONFIG_HOME`, répertoire en mode 700) :
@@ -35,6 +35,8 @@ Depuis la v2.3.0 (Phase 8, usage multi-Mac avec workspace synchronisé iCloud), 
 - `logs/` : serve_dashboard.log, check_inbox.log, hooks.log
 
 **Règle** : tout nouveau fichier runtime doit être classé **partagé** (il suit les mails, les deux macs doivent le voir) ou **local** (il est propre à la machine : secret, log, cache régénérable). Accès via `lib/config.py` (`get_imap_config`, `get_dashboard_config`, `local_config_dir`) et `lib/state.py` (`runtime_dir()` partagé, `local_runtime_dir()` local). La migration v3 → v4 (`migrate_legacy_config`) est automatique via `/start` ; en lecture, les getters retombent sur le bloc legacy du fichier partagé tant que la migration n'a pas eu lieu (précédence local > legacy).
+
+**Inertie hors workspace (v2.4.4)** : le plugin se charge dans toutes les sessions Claude Code de la machine. Hors d'un dossier marqué, les hooks et `lib/` ne doivent rien créer (ni `.todomail/`, ni `~/.config/todomail/<slug>/`), rien refuser, rien afficher. Tout nouveau hook commence par `lib.workspace.hook_workspace(payload)` et sort en silence sur `None` ; tout nouveau code qui écrit dans `.todomail/` passe par `workspace_dir()`/`runtime_dir()` ou `resolve_workspace()`, jamais par `$CLAUDE_PROJECT_DIR` brut.
 
 **Ne jamais recréer `.mcp.json`** : retiré en alpha.2 car inadapté à Claude Desktop (connexions dupliquées, proxy stdio inopérant).
 
@@ -87,6 +89,7 @@ Le repertoire `lib/` contient des helpers Python partages par les skills et comm
 - `lib/rag_cache.py` — cache RAG en memoire de session
 - `lib/error_modes.py` — strategie d'erreur (`lenient`/`strict`/`resume`)
 - `lib/config.py` — lecture/ecriture du `.todomail-config.json` (config workspace, desambiguation serveur MCP)
+- `lib/workspace.py` — critere unique « espace de travail todomail » (marqueur `.todomail-config.json`) : `is_todomail_workspace`, `resolve_workspace`, `hook_workspace` (v2.4.4)
 - `lib/consult.py` — registre `consult.md` : parsing, ajout idempotent, suppression ciblee (v2.4.1). **Ne jamais editer `consult.md` a la main** depuis une commande
 
 Ces helpers sont exploités par toutes les commandes et tous les skills du plugin depuis les Phases 2 à 6.

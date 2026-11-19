@@ -50,7 +50,7 @@ le runtime du plugin pour un workspace vit dans `.todomail/`, plus de
 
 | Fonction | Description |
 |----------|-------------|
-| `workspace_dir()` | Resout `$CLAUDE_PROJECT_DIR` ou cwd contenant `.todomail-config.json` |
+| `workspace_dir()` | Premier de `$CLAUDE_PROJECT_DIR` puis cwd qui contient `.todomail-config.json` (v2.4.4 : l'env n'est plus accepte sans marqueur) ; sinon `RuntimeError` invitant a lancer `/todomail:start` |
 | `runtime_dir()` | Dossier `.todomail/` partage (cree a la volee) |
 | `local_runtime_dir(workspace=None)` | Dossier de logs machine-local `~/.config/todomail/<slug>/logs/` (v2.3.0) |
 | `load_state()` | Charge ou cree le state avec schema par defaut |
@@ -110,6 +110,17 @@ La methode `dump_for_observability()` serialise le cache vers
 Enum `ErrorAction` : `CONTINUE`, `STOP_AND_ASK`, `RETRY_LATER`
 
 Classe `ErrorHandler(mode)` : gere les erreurs selon le mode configure.
+
+### `workspace.py` — Critere « espace de travail todomail » (v2.4.4)
+
+Critere unique, partage par les 5 hooks, `lib.state.workspace_dir()` et
+`lib.rag_cache` : un dossier est un workspace todomail s'il porte le
+marqueur `.todomail-config.json` a sa racine (ecrit par `/todomail:start`).
+Stdlib seule, ne cree jamais rien.
+
+- `is_todomail_workspace(path) -> bool`
+- `resolve_workspace(*candidats) -> Path | None` — premier candidat marque
+- `hook_workspace(payload) -> Path | None` — `$CLAUDE_PROJECT_DIR`, a defaut la `cwd` du payload, retenu seulement s'il est marque. `None` : le hook sort immediatement, en silence
 
 ### `consult.py` — Registre des consultations `consult.md` (v2.4.1)
 

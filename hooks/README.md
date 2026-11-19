@@ -1,13 +1,27 @@
 # Hooks TodoMail
 
 Hooks Claude Code livrés avec le plugin TodoMail (Phase 4, alpha.5+).
-État final v2.0.0 : 5 hooks, 19/19 tests (`bash hooks/tests/test_hooks.sh`).
+État v2.4.4 : 5 hooks, 43/43 tests (`bash hooks/tests/test_hooks.sh`).
 Leur rôle est d'automatiser ce qui était auparavant déclaratif (à la
 charge du LLM) : warm-up mémoire, garde-fou filesystem, invalidation
 du dashboard, injection contextuelle, anti-compaction.
 
 ## Principes
 
+- **Inertie hors espace de travail (v2.4.4)** : le plugin est chargé
+  dans **toutes** les sessions Claude Code de la machine, y compris dans
+  des projets sans rapport. Chaque hook commence donc par
+  `lib.workspace.hook_workspace(payload)` (`$CLAUDE_PROJECT_DIR`, à défaut
+  la `cwd` du payload, retenu seulement s'il porte le marqueur
+  `.todomail-config.json` écrit par `/todomail:start`) et sort
+  immédiatement, en silence et en exit 0, s'il obtient `None` : aucune
+  sortie, aucun refus, aucun fichier créé, ni dans le projet ni sous
+  `~/.config/todomail/<slug>/`. Deux exceptions assumées, toutes deux dans
+  `session_start` : le pointeur global `~/.config/todomail/plugin_root`
+  (un seul fichier, réécrit seulement s'il change, indispensable à
+  `/todomail:start` dans un dossier pas encore initialisé) et le log de
+  diagnostic opt-in `.hooks_debug`. `pre_compact` applique le même critère
+  à `$CLAUDE_PROJECT_DIR` puis au cwd, comme `lib.state.workspace_dir()`.
 - **Aucune logique métier** : chaque hook reste court et déterministe.
   Si un hook commence à dépasser 100 lignes, sa logique doit être
   extraite dans `lib/`.
@@ -53,7 +67,9 @@ Timeout : 10 s. Non bloquant.
 
 ### `enforce_classify.py` — event `PreToolUse` (matcher `Write|Edit`)
 
-Garde-fou structurel pour `docs/`. Refuse toute écriture dont le chemin
+Garde-fou structurel pour `docs/`, **uniquement dans un workspace
+todomail** (v2.4.4 : avant, il refusait aussi `docs/` dans tout autre
+projet ouvert avec Claude). Refuse toute écriture dont le chemin
 est sous `docs/` sans commencer par `docs/AURA/` ou `docs/MIN/` (voir
 `skills/classify-attachment/SKILL.md`). Émet un JSON :
 
@@ -151,7 +167,11 @@ Trois moyens, du plus ciblé au plus global :
 ## Test manuel
 
 Le script `hooks/tests/test_hooks.sh` invoque chaque hook avec des
-payloads JSON fictifs :
+payloads JSON fictifs, dans des dossiers temporaires : d'abord dans un
+workspace marqué (comportement historique), puis dans un projet sans
+marqueur, avec et sans `$CLAUDE_PROJECT_DIR`, où chaque hook doit rester
+muet et ne rien créer (v2.4.4). La garde côté `lib/` est couverte par
+`python3 -m unittest lib.tests.test_workspace_guard`.
 
 ```bash
 bash hooks/tests/test_hooks.sh
@@ -160,10 +180,11 @@ bash hooks/tests/test_hooks.sh
 Exemple minimal pour `enforce_classify` :
 
 ```bash
+# depuis un workspace marqué (.todomail-config.json présent)
 echo '{"hook_event_name":"PreToolUse","tool_name":"Write",
        "tool_input":{"file_path":"docs/RANDOM/x.pdf"}}' \
-  | python3 hooks/enforce_classify.py
-# → JSON avec permissionDecision=deny
+  | CLAUDE_PROJECT_DIR=/chemin/du/workspace python3 hooks/enforce_classify.py
+# → JSON avec permissionDecision=deny (rien hors workspace)
 ```
 
 ## Smoke-test Claude Desktop

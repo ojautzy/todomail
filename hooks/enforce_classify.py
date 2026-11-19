@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Hook PreToolUse (Write|Edit) — garde-fou structurel pour docs/.
 
-Refuse toute écriture ou édition sous `docs/` qui n'est pas située dans
-`docs/AURA/` ou `docs/MIN/`. Voir `skills/classify-attachment/SKILL.md`
+Dans un workspace todomail (marqueur `.todomail-config.json`), refuse
+toute écriture ou édition sous `docs/` qui n'est pas située dans
+`docs/AURA/` ou `docs/MIN/`. Inerte partout ailleurs (v2.4.4). Voir `skills/classify-attachment/SKILL.md`
 pour la règle canonique.
 
 Lit le payload JSON sur stdin (tool_name, tool_input.file_path, etc.).
@@ -15,6 +16,8 @@ import json
 import os
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 ALLOWED_ROOTS = ("docs/AURA/", "docs/MIN/")
@@ -65,13 +68,18 @@ def main() -> int:
     except Exception:
         return 0
 
+    # v2.4.4 : inerte hors d'un workspace todomail (marqueur absent)
+    from lib.workspace import hook_workspace
+    workspace = hook_workspace(payload if isinstance(payload, dict) else {})
+    if workspace is None:
+        return 0
+
     tool_input = payload.get("tool_input") or {}
     file_path = tool_input.get("file_path") or ""
     if not file_path:
         return 0
 
-    project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or payload.get("cwd")
-    rel = _normalize(file_path, project_dir)
+    rel = _normalize(file_path, str(workspace))
 
     if not _is_in_docs(rel):
         return 0  # hors docs/ : autorisé
