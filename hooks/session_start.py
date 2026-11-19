@@ -293,17 +293,18 @@ def main() -> None:
     _log_smoke(payload)
     _write_plugin_root_pointer()  # v2.4.2 : avant la garde workspace (cf. docstring)
 
-    project = _project_dir(payload)
-
-    # Garde-fou v2.4.0 : ne rien faire hors d'un workspace todomail initialise.
-    # Le marqueur `.todomail-config.json` (cree par /start, jamais supprime —
-    # cf. CLAUDE.md) est le critere. Sans cette garde, toute session Claude
-    # ouverte ailleurs (repo de dev, home...) creait un slug fantome dans
-    # `~/.config/todomail/` (memory_cache.json orphelin) et injectait un
-    # faux « Reprise possible : repertoires manquants ». `_log_smoke` reste
-    # au-dessus : opt-in explicite via `.hooks_debug`, utile pour deboguer
-    # le declenchement du hook y compris hors workspace.
-    if not (project / ".todomail-config.json").is_file():
+    # Garde-fou v2.4.0, factorise en v2.4.4 (`lib.workspace`, critere commun
+    # a tous les hooks) : ne rien faire hors d'un workspace todomail
+    # initialise. Le marqueur `.todomail-config.json` (cree par /start,
+    # jamais supprime — cf. CLAUDE.md) est le critere. Sans cette garde,
+    # toute session Claude ouverte ailleurs (repo de dev, home...) creait un
+    # slug fantome dans `~/.config/todomail/` et injectait un faux « Reprise
+    # possible : repertoires manquants ». Seules exceptions, au-dessus :
+    # `_log_smoke` (opt-in explicite via `.hooks_debug`) et le pointeur
+    # global `plugin_root` (indispensable a /start dans un nouveau dossier).
+    from lib.workspace import hook_workspace
+    project = hook_workspace(payload if isinstance(payload, dict) else {})
+    if project is None:
         return
 
     cache = _build_memory_cache(project)

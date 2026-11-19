@@ -7,6 +7,26 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [2.4.4] - 2026-11-19
+
+Le plugin, installé dans Claude Desktop, se charge dans toutes les sessions Claude Code, y compris dans des projets sans rapport avec todomail. Ses hooks y agissaient comme dans un espace de travail : création de `.todomail/` (`state.json`, `invalidate.txt`) à la racine du projet et refus d'écrire `docs/analyse-fonctionnelle.md` ou `docs/decisions.md` (« hors de la structure canonique `docs/AURA/` ou `docs/MIN/` »).
+
+### Corrigé
+
+- **Hooks inertes hors espace de travail** — les 5 hooks sortent immédiatement, en silence, si `$CLAUDE_PROJECT_DIR` (à défaut la `cwd` du payload) ne porte pas le marqueur `.todomail-config.json` : aucune sortie, aucun refus, aucun fichier créé. Concernés : `enforce_classify` (refus dans `docs/` de n'importe quel projet), `inject_context` (son `load_state()` créait `.todomail/state.json` et `invalidate.txt` au premier prompt), `invalidate_dashboard_cache` (`.todomail/invalidate.txt` et `state.json` sur tout `mv`/`rm` touchant `inbox/`, `mails/` ou `todo/`), `pre_compact` (instantané sous `.todomail/` dès que `$CLAUDE_PROJECT_DIR` était défini). `session_start` avait déjà sa garde (v2.4.0), désormais factorisée. Comportement inchangé dans un vrai espace de travail.
+- **`lib.state.workspace_dir()`** — `$CLAUDE_PROJECT_DIR` n'est plus accepté sans marqueur (repli sur le cwd marqué, comme avant) ; le message d'erreur indique les deux chemins essayés et invite à lancer `/todomail:start`.
+- **`lib.rag_cache.dump_for_observability()`** — n'écrit plus `.todomail/rag_cache.json` hors workspace.
+- **Tests de hooks** — les 2 tests `session_start` en échec depuis la v2.4.0 (projet de test sans marqueur) repassent.
+
+### Ajouté
+
+- **`lib/workspace.py`** — critère unique : `is_todomail_workspace(path)`, `resolve_workspace(*candidats)`, `hook_workspace(payload)` (stdlib seule, ne crée jamais rien).
+- **Tests** — `hooks/tests/test_hooks.sh` (43 tests, contre 21) : bloc « hors workspace » qui rejoue chaque hook dans un projet sans marqueur, avec et sans `$CLAUDE_PROJECT_DIR`, et vérifie l'absence de sortie, de refus (`docs/analyse.md`) et de fichier créé (projet et `TODOMAIL_CONFIG_HOME`) ; cas `docs/foo.md`, chemins absolus, `mv inbox/ → mails/`, injection de contexte. `lib/tests/test_workspace_guard.py` (12 tests) pour `lib.workspace`, `workspace_dir()` et `rag_cache`.
+
+### Modifié
+
+- **Documentation** — `hooks/README.md` (nouveau principe : inertie hors espace de travail), `lib/README.md`, `CLAUDE.md`.
+
 ## [2.4.3] - 2026-11-10
 
 Les réécritures atomiques de `lib/` rendaient lisible par tous un fichier privé : `consult.md` (créé en `0o600` par Claude) repassait en `0o644` à chaque « Marquer comme traité » du dashboard, à chaque ajout par `/process-todo` et lors du dédoublonnage.

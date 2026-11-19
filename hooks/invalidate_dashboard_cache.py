@@ -9,6 +9,7 @@ aussi `.todomail/invalidate.txt` au passage — redondance assumee, c'est le
 fichier de signal, peu importe d'ou vient le top).
 
 Toujours exit 0 (non bloquant). Lit le payload JSON sur stdin.
+Totalement inerte hors d'un workspace todomail (v2.4.4).
 """
 
 import json
@@ -22,10 +23,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 WATCHED_DIRS = ("todo/", "inbox/", "mails/", "./todo/", "./inbox/", "./mails/")
-
-
-def _project_dir(payload: dict) -> Path:
-    return Path(os.environ.get("CLAUDE_PROJECT_DIR") or payload.get("cwd") or ".")
 
 
 def _command_touches_watched(command: str) -> bool:
@@ -65,12 +62,17 @@ def main() -> None:
     except Exception:
         return
 
+    # v2.4.4 : inerte hors d'un workspace todomail (marqueur absent)
+    from lib.workspace import hook_workspace
+    project = hook_workspace(payload if isinstance(payload, dict) else {})
+    if project is None:
+        return
+
     tool_input = payload.get("tool_input") or {}
     command = tool_input.get("command") or ""
     if not _command_touches_watched(command):
         return
 
-    project = _project_dir(payload)
     _touch(project / ".todomail" / "invalidate.txt")
     _bump_counter()
 

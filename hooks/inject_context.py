@@ -6,6 +6,7 @@ le contexte du prompt utilisateur, uniquement si quelque chose mérite
 l'attention de Claude (phase en cours, verrou, erreurs).
 
 Reste silencieux le reste du temps (aucune sortie). Toujours exit 0.
+Totalement inerte hors d'un workspace todomail (v2.4.4).
 """
 
 import json
@@ -16,6 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 def _build_summary() -> str | None:
+    # Appele uniquement dans un workspace marque (cf. main) : load_state()
+    # cree state.json s'il manque, ce qui est voulu dans un workspace.
     try:
         from lib.state import load_state, get_pending_errors
         state = load_state()
@@ -46,9 +49,15 @@ def _build_summary() -> str | None:
 
 def main() -> None:
     try:
-        _ = json.load(sys.stdin) if not sys.stdin.isatty() else {}
+        payload = json.load(sys.stdin) if not sys.stdin.isatty() else {}
     except Exception:
-        pass
+        payload = {}
+
+    # v2.4.4 : inerte hors d'un workspace todomail (avant, load_state()
+    # creait .todomail/state.json dans n'importe quel projet ouvert).
+    from lib.workspace import hook_workspace
+    if hook_workspace(payload if isinstance(payload, dict) else {}) is None:
+        return
 
     summary = _build_summary()
     if not summary:

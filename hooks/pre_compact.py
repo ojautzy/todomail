@@ -5,7 +5,8 @@ Sauvegarde le state.json courant et les checkpoints dans un fichier
 horodaté sous `$CLAUDE_PROJECT_DIR/.todomail/precompact_snapshot_<ts>.json`
 pour permettre une reprise post-compaction si besoin.
 
-Ne bloque jamais la compaction (exit 0 toujours).
+Ne bloque jamais la compaction (exit 0 toujours). Totalement inerte
+hors d'un workspace todomail (v2.4.4).
 """
 
 import json
@@ -21,14 +22,14 @@ MAX_SNAPSHOTS = 10  # garde les 10 plus récents
 
 
 def _runtime_dir() -> Path | None:
-    """Retourne `$CLAUDE_PROJECT_DIR/.todomail/` ou cwd-fallback si marqueur."""
-    env = os.environ.get("CLAUDE_PROJECT_DIR")
-    if env and Path(env).is_dir():
-        return Path(env) / ".todomail"
-    cwd = Path.cwd()
-    if (cwd / ".todomail-config.json").is_file():
-        return cwd / ".todomail"
-    return None
+    """`.todomail/` du workspace, ou None hors workspace todomail (v2.4.4).
+
+    Memes candidats que `lib.state.workspace_dir()` ($CLAUDE_PROJECT_DIR
+    puis cwd), chacun retenu seulement s'il porte le marqueur.
+    """
+    from lib.workspace import resolve_workspace
+    ws = resolve_workspace(os.environ.get("CLAUDE_PROJECT_DIR"), os.getcwd())
+    return None if ws is None else ws / ".todomail"
 
 
 def _load_state() -> dict:
